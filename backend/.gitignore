@@ -1,0 +1,43 @@
+# Python-related
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+
+# Virtual environment
+venv/
+env/
+
+# Editor/IDE-related
+.vscode/
+.idea/
+*.swp
+
+# OS-generated files
+.DS_Store
+Thumbs.db
+
+# Logs and temp files
+logs/
+*.log
+*.out
+*.pid
+
+# Uvicorn and FastAPI cache
+*.db
+*.sqlite3
+
+# Environment variables
+.env
+.env.local
+.env.production
+.env.development
+
+# Pytest cache
+.pytest_cache/
+
+# Migrations (if using Alembic)
+migrations/
+
+# Jupyter Notebook checkpoints (if used for ML-related tasks)
+.ipynb_checkpoints/
