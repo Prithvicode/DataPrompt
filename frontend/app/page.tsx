@@ -1,10 +1,13 @@
-import FetchData from "@/components/FetchData";
-import React from "react";
+"use client";
+import ChatComponent from "@/components/Chat";
+import Chat from "@/components/Chat";
+
+import React, { useState } from "react";
 
 const page = () => {
   return (
-    <div>
-      <FetchData />
+    <div className="flex flex-col items-center justify-center min-h-screen p-4">
+      <ChatComponent />
     </div>
   );
 };
