@@ -1,55 +1,170 @@
 import { useState } from "react";
 
+interface TableRow {
+  [key: string]: string | number | boolean | null;
+}
+
 export default function ChatComponent() {
   const [prompt, setPrompt] = useState("");
   const [response, setResponse] = useState("");
   const [loading, setLoading] = useState(false);
+  const [file, setFile] = useState<File | null>(null);
+  const [tableData, setTableData] = useState<TableRow[] | null>(null);
+  const [summaryData, setSummaryData] = useState<Record<string, any> | null>(
+    null
+  );
 
-  const sendPrompt = async () => {
-    if (!prompt.trim()) return;
+  // Process both the prompt and the CSV file
+  const processData = async () => {
+    if (!prompt.trim() || !file) return;
     setLoading(true);
     setResponse("");
+    // Clear any previous data
+    setTableData(null);
+    setSummaryData(null);
+
+    const formData = new FormData();
+    formData.append("prompt", prompt);
+    formData.append("file", file);
 
     try {
-      const res = await fetch("http://localhost:8000/chat", {
+      const res = await fetch("http://localhost:8000/process", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt }),
+        body: formData,
       });
-
       const data = await res.json();
       setResponse(data.response);
+      // Check if the returned data is an array (table) or an object (summary)
+      if (data.data) {
+        if (Array.isArray(data.data)) {
+          setTableData(data.data); // Set table data if array
+        } else {
+          setSummaryData(data.data); // Set summary data if object
+        }
+      }
     } catch (error) {
-      console.error("Error fetching response:", error);
+      console.error("Error processing data:", error);
     } finally {
       setLoading(false);
     }
   };
 
+  const uploadFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const uploadedFile = e.target.files ? e.target.files[0] : null;
+    setFile(uploadedFile);
+  };
+
   return (
-    <div className="max-w-lg mx-auto p-6 bg-gray-800 text-white shadow-lg rounded-xl">
-      <h2 className="text-2xl font-bold mb-4 text-center">
-        Chat with DataPrompt
-      </h2>
-      <div className="flex space-x-2">
-        <input
-          type="text"
-          placeholder="Ask something..."
-          value={prompt}
-          onChange={(e) => setPrompt(e.target.value)}
-          className="flex-1 p-2 border border-gray-600 rounded-lg bg-gray-700 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-        />
-        <button
-          onClick={sendPrompt}
-          disabled={loading}
-          className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg text-white font-medium disabled:opacity-50"
-        >
-          {loading ? "Thinking..." : "Send"}
-        </button>
+    <div className="w-full max-w-5xl mx-auto p-6 bg-[#2D2D2D] text-white shadow-lg rounded-3xl">
+      <div className="mb-6 flex flex-col space-y-5">
+        {/* Prompt Input */}
+        <div className="flex items-center space-x-3">
+          <input
+            type="text"
+            placeholder="Enter your prompt..."
+            value={prompt}
+            onChange={(e) => setPrompt(e.target.value)}
+            className="flex-1 p-4 bg-[#3C3C3C] text-white rounded-2xl border border-[#444444] focus:outline-none focus:ring-2 focus:ring-[#2A9FD6] transition duration-300"
+          />
+          <button
+            onClick={processData}
+            disabled={loading || !file}
+            className="px-6 py-3 bg-[#2A9FD6] hover:bg-[#1D8CB7] rounded-full text-white font-semibold disabled:opacity-50 transition duration-300"
+          >
+            {loading ? "Thinking..." : "Send"}
+          </button>
+        </div>
+
+        {/* File Upload with Round Button */}
+        <div className="flex items-center space-x-4">
+          <input
+            type="file"
+            onChange={uploadFile}
+            className="hidden"
+            id="fileUpload"
+          />
+          <label
+            htmlFor="fileUpload"
+            className="size-10 flex items-center justify-center rounded-full bg-[#2A9FD6] text-white cursor-pointer hover:bg-[#1D8CB7] transition duration-300"
+          >
+            <span className="text-3xl">+</span>
+          </label>
+          {file && (
+            <span className="text-gray-300 text-sm truncate max-w-xs">
+              {file.name}
+            </span>
+          )}
+        </div>
       </div>
+
+      {/* Display Response */}
       {response && (
-        <div className="mt-4 p-4 bg-gray-900 border border-gray-700 rounded-lg">
+        <div className="mt-6 p-6 bg-[#3C3C3C] border border-[#444444] rounded-2xl">
           <p className="text-gray-300">{response}</p>
+        </div>
+      )}
+
+      {/* Display Table Data */}
+      {tableData && (
+        <div className="mt-6 overflow-x-auto bg-[#3C3C3C] border border-[#444444] rounded-2xl">
+          <table className="min-w-full border-collapse text-gray-300">
+            <thead>
+              <tr className="bg-[#444444]">
+                {Object.keys(tableData[0]).map((key) => (
+                  <th
+                    key={key}
+                    className="px-6 py-3 text-left font-medium text-gray-400"
+                  >
+                    {key}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {tableData.map((row, index) => (
+                <tr key={index} className="bg-[#3C3C3C]">
+                  {Object.values(row).map((value, idx) => (
+                    <td
+                      key={idx}
+                      className="px-6 py-4 border-t border-[#444444] text-sm"
+                    >
+                      {value !== null ? value : "N/A"}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Display Summary Data */}
+      {summaryData && (
+        <div className="mt-6 p-6 bg-[#3C3C3C] border border-[#444444] rounded-2xl">
+          <h3 className="text-xl font-bold mb-4 text-[#2A9FD6]">
+            Data Summary
+          </h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {Object.entries(summaryData.summary_stats).map(
+              ([column, stats]) => (
+                <div key={column} className="space-y-2">
+                  <h4 className="font-semibold text-gray-300">{column}</h4>
+                  <ul className="list-disc pl-5 space-y-1">
+                    {typeof stats === "object" && stats !== null
+                      ? Object.entries(stats).map(([key, value]) => (
+                          <li key={key} className="text-sm text-gray-400">
+                            {key}: {value !== null ? value : "N/A"}
+                          </li>
+                        ))
+                      : String(stats)}
+                  </ul>
+                </div>
+              )
+            )}
+          </div>
+          <div className="mt-4 p-4 bg-[#444444] text-gray-300 rounded-lg">
+            <p>{summaryData.summary_explanation}</p>
+          </div>
         </div>
       )}
     </div>
