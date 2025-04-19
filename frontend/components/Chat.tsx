@@ -215,6 +215,7 @@ export default function ChatComponent() {
         throw new Error(`Chat failed: ${chatResponse.statusText}`);
       }
 
+      console.log("Chat response:", chatResponse.body);
       const reader = chatResponse.body?.getReader();
       if (!reader) throw new Error("No reader");
 
@@ -317,7 +318,7 @@ export default function ChatComponent() {
   const hasMessages = messages.length > 0;
 
   return (
-    <div className="flex h-screen text-gray-100 overflow-hidden w-full">
+    <div className="flex h-screen text-gray-100 overflow-hidden w-full custom-scrollbar">
       {/* Main Chat Area */}
       <div
         className={cn(

@@ -3,135 +3,74 @@ import json
 from typing import List, Dict, Any, Generator
 import re
 
-# Update this to your Ollama API URL
-OLLAMA_URL = "http://localhost:11434/api/chat"
-MODEL_NAME = "llama3.2"  # Update to your preferred model
 
-def classify_intent(prompt: str, chat_history: List[Dict[str, str]] = None) -> Dict[str, Any]:
-    print(f"Prompt from user: {prompt}")
-    """
-    Classify the intent of the user's prompt using LLaMA.
-    
-    Returns a dictionary with:
-    - type: The type of operation (summary, trend, aggregation, forecast, filter, query)
-    - Additional parameters specific to the intent
-    """
-    # Prepare the system prompt
-    system_prompt = """
-You are an AI assistant that classifies user queries about datasets into specific analysis intents and extracts required parameters.
+OLLAMA_URL = "http://localhost:11434/api/generate"
+MODEL_NAME = "llama3.2"
 
-You must classify the user's prompt into **one** of the following categories:
+def classify_intent(prompt: str, chat_history: List[Dict[str, str]] = None) -> Dict[str, str]:
+    print(f"[DEBUG] Prompt from user: {prompt}")
 
-1. summary — The user wants a general overview or description of the dataset. Look for words like: "summarize", "overview", "basic stats", "describe", "columns", "missing values", "types", "distribution".
-2. trend — The user is asking for trends or patterns over time. Look for: "trend", "change over time", "increasing", "monthly", "weekly", "compare this year to last".
-3. aggregation — The user wants to group and aggregate data by one or more columns. Look for: "group by", "average per", "sum by", "total sales by category", etc.
-4. forecast — The user wants to predict future values. Look for: "predict", "forecast", "future sales", "next quarter", "estimate", "project".
-5. filter — The user wants to extract data that meets certain conditions. Look for: "only show", "filter by", "where", "sales > 1000", "products in category X".
-6. query — General questions not fitting the above types. Includes specific lookups or questions like "top 10 products", "how many orders in January", etc.
+    base_prompt = f"""
+You are an AI that classifies data analysis queries into one of these intents: summary, trend, aggregation, forecast, filter, or query.
+Respond with only one word representing the intent.
+Do not include any other text.
 
----
+Prompt: {prompt}
+""".strip()
 
-💡 Examples:
-
-- "Give me a summary of the dataset" → summary
-- "What are the top-selling products by category?" → aggregation
-- "Forecast sales for the next 6 months" → forecast
-- "How did revenue change over the last year?" → trend
-- "Show me rows where region is 'West'" → filter
-- "Which product had the highest sales in March?" → query
-
----
-
-For each category, extract the following parameters if present:
-
-- trend: `time_column`, `value_column`
-- aggregation: `group_by_columns`, `agg_column`, `agg_function`
-- forecast: `target_column`, `time_column`, `periods`
-- filter: `filter_conditions`
-
----
-
-🎯 Output:
-Respond **ONLY** with a JSON object like this:
-
-```json
-{
-  "intent": "summary",
-  "parameters": {}
-}"""
-
-    # Prepare the user prompt
-    user_prompt = f"Classify this data analysis query: {prompt}"
-    
-    # Prepare the messages
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_prompt}
-    ]
-    
-    # Add chat history for context if available
-    if chat_history and len(chat_history) > 0:
-        # Insert chat history before the current query
-        messages = [messages[0]] + chat_history + [messages[1]]
-    
-    # Make the API call
     try:
         response = requests.post(
             OLLAMA_URL,
-            json={"model": MODEL_NAME, "messages": messages}
+            json={"model": MODEL_NAME, "prompt": base_prompt, "stream": False}
         )
         response.raise_for_status()
         
-        # Extract the JSON from the response
-        response_text = response.json().get("message", {}).get("content", "")
-        
-        # Try to extract JSON from the response
-        json_match = re.search(r'```json\s*(.*?)\s*```', response_text, re.DOTALL)
-        if json_match:
-            json_str = json_match.group(1)
-        else:
-            # If no JSON code block, try to find JSON directly
-            json_match = re.search(r'(\{.*\})', response_text, re.DOTALL)
-            if json_match:
-                json_str = json_match.group(1)
-            else:
-                json_str = response_text
-        
-        # Parse the JSON
-        try:
-            intent = json.loads(json_str)
-        except json.JSONDecodeError:
-            # If JSON parsing fails, use a simple regex-based approach
-            intent = {"type": "query"}
-            
-            if re.search(r'summary|overview|statistics|describe', prompt, re.IGNORECASE):
-                intent["type"] = "summary"
-            elif re.search(r'trend|over time|timeseries|time series', prompt, re.IGNORECASE):
-                intent["type"] = "trend"
-                # Try to extract time column
-                time_match = re.search(r'by\s+(\w+)', prompt, re.IGNORECASE)
-                if time_match:
-                    intent["time_column"] = time_match.group(1)
-            elif re.search(r'group|aggregate|sum|average|mean', prompt, re.IGNORECASE):
-                intent["type"] = "aggregation"
-                # Try to extract group by column
-                group_match = re.search(r'by\s+(\w+)', prompt, re.IGNORECASE)
-                if group_match:
-                    intent["group_by_columns"] = [group_match.group(1)]
-            elif re.search(r'forecast|predict|future|next', prompt, re.IGNORECASE):
-                intent["type"] = "forecast"
-                # Try to extract periods
-                period_match = re.search(r'next\s+(\d+)', prompt, re.IGNORECASE)
-                if period_match:
-                    intent["periods"] = int(period_match.group(1))
-            elif re.search(r'filter|where|only|show', prompt, re.IGNORECASE):
-                intent["type"] = "filter"
-        
-        return intent
-    except Exception as e:
-        print(f"Error classifying intent: {str(e)}")
-        return {"type": "query"}
+        response_json = response.json()
+        model_response = response_json.get("response", "").strip().lower()
+        print(f"[DEBUG] LLM response: {model_response}",flush=True)
 
+        valid_intents = {"summary", "trend", "aggregation", "forecast", "filter", "query"}
+        if model_response in valid_intents:
+            return {"intent": model_response, "parameters": {}}
+        else:
+            print("[WARN] Invalid response from model. Falling back to regex.")
+
+    except requests.exceptions.JSONDecodeError as e:
+        print(f"[ERROR] JSON decoding error: {str(e)}")
+    except Exception as e:
+        print(f"[ERROR] Exception during classify_intent: {str(e)}")
+
+    # Fallback: regex-based rule classification
+    if re.search(r'summary|overview|describe|statistics', prompt, re.IGNORECASE):
+        return {"intent": "summary", "parameters": {}}
+    elif re.search(r'trend|over time|timeseries|time series', prompt, re.IGNORECASE):
+        return {"intent": "trend", "parameters": {}}
+    elif re.search(r'group|aggregate|sum|average|mean|by', prompt, re.IGNORECASE):
+        return {"intent": "aggregation", "parameters": {}}
+    elif re.search(r'forecast|predict|future|next', prompt, re.IGNORECASE):
+        return {"intent": "forecast", "parameters": {}}
+    elif re.search(r'filter|where|only|show', prompt, re.IGNORECASE):
+        return {"intent": "filter", "parameters": {}}
+    else:
+        return {"intent": "query", "parameters": {}}
+    
+# def classify_intent(prompt: str, chat_history: List[Dict[str, str]] = None) -> Dict[str, str]:
+#     print(f"[DEBUG] Prompt from user: {prompt}")
+
+#     # Rule-based regex classification (no LLM)
+#     if re.search(r'summary|overview|describe|statistics', prompt, re.IGNORECASE):
+#         return {"intent": "summary", "parameters": {}}
+#     elif re.search(r'trend|over time|timeseries|time series', prompt, re.IGNORECASE):
+#         return {"intent": "trend", "parameters": {}}
+#     elif re.search(r'group|aggregate|sum|average|mean|by', prompt, re.IGNORECASE):
+#         return {"intent": "aggregation", "parameters": {}}
+#     elif re.search(r'forecast|predict|future|next', prompt, re.IGNORECASE):
+#         return {"intent": "forecast", "parameters": {}}
+#     elif re.search(r'filter|where|only|show', prompt, re.IGNORECASE):
+#         return {"intent": "filter", "parameters": {}}
+#     else:
+#         return {"intent": "query", "parameters": {}}
+    
 def stream_llama_response(
     prompt: str, 
     chat_history: List[Dict[str, str]] = None,

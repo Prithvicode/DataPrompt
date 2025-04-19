@@ -11,8 +11,13 @@ from datetime import datetime
 import asyncio
 from pydantic import BaseModel
 
-# Import your DataAnalyzer class
-# from data_analyzer import DataAnalyzer
+# Import services
+from services.file_service import save_file, get_dataset, list_datasets
+from services.nlp_service import classify_intent, stream_llama_response
+from services.data_service import DataAnalyzer
+from services.forecast_service import ForecastService
+from services.visualization_service import create_visualization
+
 
 # In-memory storage for datasets and analysis jobs
 cached_datasets = {}
@@ -80,6 +85,7 @@ async def upload_file(file: UploadFile = File(...)):
             "columns": list(df.columns),
             "row_count": len(df)
         }
+    
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing file: {str(e)}")
     finally:
@@ -123,96 +129,107 @@ async def get_dataset(dataset_id: str):
         "preview": info["df"].head(10).to_dict(orient='records')
     }
 
+
 @app.post("/analyze")
 async def analyze_data(request: AnalyzeRequest, background_tasks: BackgroundTasks):
     """
-    Analyze data based on a prompt.
+    Analyze data based on a prompt. Classify intent and handle accordingly.
     """
     if request.dataset_id not in cached_datasets:
         raise HTTPException(status_code=404, detail="Dataset not found")
     
-    # Get the dataset
     df = cached_datasets[request.dataset_id]["df"]
-    
-    # Create a job ID
+    analyzer = DataAnalyzer(df)
+
+    # Create and store job
     job_id = str(uuid.uuid4())
-    
-    # Store job information
     analysis_jobs[job_id] = {
         "status": "processing",
         "prompt": request.prompt,
         "dataset_id": request.dataset_id,
         "result": None
     }
-    
-    # For demo purposes, we'll just return a simple summary
-    # In a real implementation, you would use NLP to determine the intent
-    # and call the appropriate method on your DataAnalyzer class
-    
-    # Example summary result
-    result = {
-        "type": "summary",
-        "data": {
-            "dataset_info": {
-                "rows": len(df),
-                "columns": len(df.columns),
-                "column_names": list(df.columns),
-                "missing_values": df.isnull().sum().to_dict()
-            },
-            "numeric_stats": df.describe().to_dict() if not df.select_dtypes(include=['number']).empty else {}
+
+    try:
+        # ✅ Use fast classifier (returns a dict with intent + parameters)
+        intent_info = classify_intent(request.prompt)
+        intent = intent_info.get("intent", "query")
+        parameters = intent_info.get("parameters", {})
+
+        print(f"[DEBUG] Classified intent: {intent}, Parameters: {parameters}")
+
+        # ✅ Dispatch based on intent
+        if intent == "summary":
+            result = analyzer.generate_summary()
+
+        elif intent == "query":
+            result = analyzer.execute_query(request.prompt)
+
+        elif intent == "trend":
+            result = analyzer.analyze_trend(request.prompt, **parameters)
+
+        elif intent == "forecast":
+            result = analyzer.forecast(request.prompt, **parameters)
+
+        elif intent == "aggregation":
+            result = analyzer.aggregate(request.prompt, **parameters)
+
+        elif intent == "filter":
+            result = analyzer.filter_data(request.prompt, **parameters)
+
+        else:
+            raise HTTPException(status_code=400, detail=f"Unsupported intent: {intent}")
+
+        # ✅ Save result to job store
+        analysis_jobs[job_id]["result"] = result
+        analysis_jobs[job_id]["status"] = "completed"
+
+        return {
+            "job_id": job_id,
+            "result": result
         }
-    }
-    
-    # Update job with result
-    analysis_jobs[job_id]["result"] = result
-    analysis_jobs[job_id]["status"] = "completed"
-    
-    return {
-        "job_id": job_id,
-        "result": result
-    }
+
+    except Exception as e:
+        analysis_jobs[job_id]["status"] = "failed"
+        analysis_jobs[job_id]["result"] = {"error": str(e)}
+        raise HTTPException(status_code=500, detail=str(e))
 
 async def generate_chat_response(prompt: str, job_id: Optional[str] = None):
     """
     Generate a streaming chat response.
     """
-    # Get job information if provided
     job_info = None
     if job_id and job_id in analysis_jobs:
         job_info = analysis_jobs[job_id]
-    
-    # Generate a response based on the prompt and job information
-    # This is a simplified example - in a real implementation, you would use an LLM
-    
+
+    def format_data(content: str):
+        return f"data: {json.dumps({'content': content})}\n\n"
+
     # Start with a greeting
-    yield json.dumps({"content": "I've analyzed your data. "})
+    yield format_data("I've analyzed your data.")
     await asyncio.sleep(0.5)
-    
-    # If we have job information, include details about the analysis
+
     if job_info and job_info["result"]:
         result = job_info["result"]
-        
+
         if result["type"] == "summary":
             data_info = result["data"]["dataset_info"]
-            yield json.dumps({"content": f"Your dataset has {data_info['rows']} rows and {data_info['columns']} columns. "})
+            yield format_data(f"Your dataset has {data_info['rows']} rows and {data_info['columns']} columns.")
             await asyncio.sleep(0.5)
-            
-            # Mention columns
-            yield json.dumps({"content": f"The columns are: {', '.join(data_info['column_names'][:5])}... "})
+
+            yield format_data(f"The columns are: {', '.join(data_info['column_names'][:5])}...")
             await asyncio.sleep(0.5)
-            
-            # Mention missing values if any
+
             missing_values = sum(data_info['missing_values'].values())
             if missing_values > 0:
-                yield json.dumps({"content": f"There are {missing_values} missing values in the dataset. "})
+                yield format_data(f"There are {missing_values} missing values in the dataset.")
                 await asyncio.sleep(0.5)
-    
-    # Add a conclusion
-    yield json.dumps({"content": "You can ask me more specific questions about this data if you'd like."})
+
+    yield format_data("You can ask me more specific questions about this data if you'd like.")
     await asyncio.sleep(0.5)
-    
-    # Signal the end of the stream
-    yield "data: [DONE]"
+
+    # Signal the end
+    yield "data: [DONE]\n\n"
 
 @app.post("/chat")
 async def chat(request: ChatRequest):
@@ -227,3 +244,56 @@ async def chat(request: ChatRequest):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
+
+
+
+
+
+#     @app.post("/analyze")
+# async def analyze_data(request: AnalyzeRequest, background_tasks: BackgroundTasks):
+#     """
+#     Analyze data based on a prompt.
+#     """
+#     if request.dataset_id not in cached_datasets:
+#         raise HTTPException(status_code=404, detail="Dataset not found")
+    
+#     # Get the dataset
+#     df = cached_datasets[request.dataset_id]["df"]
+    
+#     # Create a job ID
+#     job_id = str(uuid.uuid4())
+    
+#     # Store job information
+#     analysis_jobs[job_id] = {
+#         "status": "processing",
+#         "prompt": request.prompt,
+#         "dataset_id": request.dataset_id,
+#         "result": None
+#     }
+    
+#     # For demo purposes, we'll just return a simple summary
+#     # In a real implementation, you would use NLP to determine the intent
+#     # and call the appropriate method on your DataAnalyzer class
+    
+#     # Example summary result
+#     result = {
+#         "type": "summary",
+#         "data": {
+#             "dataset_info": {
+#                 "rows": len(df),
+#                 "columns": len(df.columns),
+#                 "column_names": list(df.columns),
+#                 "missing_values": df.isnull().sum().to_dict()
+#             },
+#             "numeric_stats": df.describe().to_dict() if not df.select_dtypes(include=['number']).empty else {}
+#         }
+#     }
+    
+#     # Update job with result
+#     analysis_jobs[job_id]["result"] = result
+#     analysis_jobs[job_id]["status"] = "completed"
+    
+#     return {
+#         "job_id": job_id,
+#         "result": result
+#     }
