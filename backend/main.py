@@ -151,14 +151,13 @@ async def analyze_data(request: AnalyzeRequest, background_tasks: BackgroundTask
     }
 
     try:
-        # ✅ Use fast classifier (returns a dict with intent + parameters)
+        # Classify the intent of the user prompt
         intent_info = classify_intent(request.prompt)
         intent = intent_info.get("intent", "query")
         parameters = intent_info.get("parameters", {})
 
         print(f"[DEBUG] Classified intent: {intent}, Parameters: {parameters}")
 
-        # ✅ Dispatch based on intent
         if intent == "summary":
             result = analyzer.generate_summary()
 
@@ -175,12 +174,14 @@ async def analyze_data(request: AnalyzeRequest, background_tasks: BackgroundTask
             result = analyzer.aggregate(request.prompt, **parameters)
 
         elif intent == "filter":
-            result = analyzer.filter_data(request.prompt, **parameters)
+            # Pass the columns of the dataframe along with the prompt to filter_data
+            print("COlumns", df.columns.tolist())
+            result = analyzer.filter_data(request.prompt, df.columns.tolist())
 
         else:
             raise HTTPException(status_code=400, detail=f"Unsupported intent: {intent}")
 
-        # ✅ Save result to job store
+        # Update the job with result and set status to completed
         analysis_jobs[job_id]["result"] = result
         analysis_jobs[job_id]["status"] = "completed"
 
@@ -190,6 +191,7 @@ async def analyze_data(request: AnalyzeRequest, background_tasks: BackgroundTask
         }
 
     except Exception as e:
+        # In case of an error, set the job status to failed and capture the error
         analysis_jobs[job_id]["status"] = "failed"
         analysis_jobs[job_id]["result"] = {"error": str(e)}
         raise HTTPException(status_code=500, detail=str(e))

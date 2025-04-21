@@ -54,22 +54,6 @@ Prompt: {prompt}
     else:
         return {"intent": "query", "parameters": {}}
     
-# def classify_intent(prompt: str, chat_history: List[Dict[str, str]] = None) -> Dict[str, str]:
-#     print(f"[DEBUG] Prompt from user: {prompt}")
-
-#     # Rule-based regex classification (no LLM)
-#     if re.search(r'summary|overview|describe|statistics', prompt, re.IGNORECASE):
-#         return {"intent": "summary", "parameters": {}}
-#     elif re.search(r'trend|over time|timeseries|time series', prompt, re.IGNORECASE):
-#         return {"intent": "trend", "parameters": {}}
-#     elif re.search(r'group|aggregate|sum|average|mean|by', prompt, re.IGNORECASE):
-#         return {"intent": "aggregation", "parameters": {}}
-#     elif re.search(r'forecast|predict|future|next', prompt, re.IGNORECASE):
-#         return {"intent": "forecast", "parameters": {}}
-#     elif re.search(r'filter|where|only|show', prompt, re.IGNORECASE):
-#         return {"intent": "filter", "parameters": {}}
-#     else:
-#         return {"intent": "query", "parameters": {}}
     
 def stream_llama_response(
     prompt: str, 
@@ -174,17 +158,128 @@ def stream_llama_response(
 
 
 
+def filter_query(prompt: str, df_columns: List[str]) -> tuple[str, str]:
+    """
+    Use the LLM to generate the filtering condition and any extra instructions.
+    Returns a tuple: (filter_condition, extra_instructions)
+    """
+    print(f"[DEBUG] Starting filter_query with prompt: '{prompt}'")
+    print(f"[DEBUG] Available columns: {df_columns}")
+    
+    # Enhanced prompt with more examples for column value filtering
+    base_prompt = f"""
+You are a data assistant. Your job is to turn a user's natural language request into:
+
+1. A filter condition for a pandas DataFrame using the columns listed below
+2. Any extra instructions (like sorting or grouping)
+
+Only use the **exact** column names from this list (they are case-sensitive): {', '.join(df_columns)}
+
+---
+
+User query: "{prompt.strip().rstrip('.')}"
+
+Instructions:
+- Understand what the user is asking for, even if they use casual words or synonyms.
+- Only use the column names provided — do not guess or invent new ones.
+- If no filtering is needed, just return `True` for the condition.
+- If there are extra instructions like "top 5", "group by", or "sort by", return those on the second line. If none, write `none`.
+
+Formatting rules:
+- Wrap column names with spaces in backticks: ``Customer Segment``
+- Use double quotes for values: `Region == "West"`
+- Use proper operators: `==`, `>`, `<`, `!=`, etc.
+
+---
+
+Return format:
+Line 1: Filter condition (a single-line string for use in `df.query()`)
+Line 2: Extra instruction (or `none`)
+
+---
+
+Examples:
+
+Query: "show electronics with revenue above 1000"  
+→ `ProductCategory == "Electronics" and Revenue > 1000`  
+→ `none`
+
+Query: "top 5 months with most profit in 2023"  
+→ `Year == 2023 and Profit > 0`  
+→ `top 5 sort by Profit`
+
+Query: "group total revenue by product category"  
+→ `True`  
+→ `sum by ProductCategory`
+
+Query: "filter data by productCategory Clothing"  
+→ `ProductCategory == "Clothing"`  
+→ `none`
+
+Query: "just show the data"  
+→ `True`  
+→ `none`
+
+---
+
+Now respond with the filter condition and instruction:
+"""
 
 
+    print(f"[DEBUG] Sending request to Ollama with model: {MODEL_NAME}")
+    
+    try:
+        payload = {
+            "model": MODEL_NAME,
+            "messages": [
+                {"role": "system", "content": "You are a data filtering assistant that only returns pandas filter conditions."},
+                {"role": "user", "content": base_prompt}
+            ],
+            "stream": False
+        }
 
+        response = requests.post(OLLAMA_URL, json=payload)
+        response.raise_for_status()
 
+        response_data = response.json()
+        print(f"[DEBUG] Full Ollama response: {json.dumps(response_data)}")
 
+        # Determine correct text from chat or completion format
+        if "message" in response_data and "content" in response_data["message"]:
+            response_text = response_data["message"]["content"].strip()
+        elif "response" in response_data:
+            response_text = response_data["response"].strip()
+        else:
+            # Fallback to completion endpoint
+            print("[DEBUG] Chat format failed, trying completion endpoint")
+            completion_url = "http://localhost:11434/api/generate"
+            completion_payload = {
+                "model": MODEL_NAME,
+                "prompt": base_prompt,
+                "stream": False
+            }
 
+            completion_response = requests.post(completion_url, json=completion_payload)
+            completion_response.raise_for_status()
+            completion_data = completion_response.json()
+            print(f"[DEBUG] Completion response: {json.dumps(completion_data)[:200]}...")
+            response_text = completion_data.get("response", "").strip()
 
+        print(f"[DEBUG] Extracted response text: '{response_text}'")
 
+        # Final logic to split and validate
+        lines = [line.strip() for line in response_text.splitlines() if line.strip()]
+        if len(lines) == 2:
+            return lines[0], lines[1]
+        elif len(lines) == 1:
+            return lines[0], "none"
+        else:
+            print("[WARN] Unexpected format from LLM response")
+            return "", "none"
 
-
-
+    except Exception as e:
+        print(f"[ERROR] Exception during filter_query: {str(e)}")
+        return "", "none"
 
 
 
