@@ -295,12 +295,12 @@ export default function ChatComponent() {
     switch (analysisResult.type) {
       case "summary":
         return <DataSummary data={analysisResult.data} />;
-
       case "forecast":
         return <ForecastResults data={analysisResult} />;
       case "aggregation":
         return <AggregationResults data={analysisResult} />;
       case "filter":
+        return <DataTable data={analysisResult.data} />;
       case "query":
         return analysisResult.data ? (
           <DataTable data={analysisResult.data} />

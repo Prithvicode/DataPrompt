@@ -10,7 +10,7 @@ import json
 from datetime import datetime
 import asyncio
 from pydantic import BaseModel
-
+import numpy as np
 # Import services
 from services.file_service import save_file, get_dataset, list_datasets
 from services.nlp_service import classify_intent, stream_llama_response
@@ -48,6 +48,40 @@ class ChatRequest(BaseModel):
     chat_history: Optional[List[ChatMessage]] = None
     job_id: Optional[str] = None
 
+
+def make_json_safe(data):
+    """
+    Recursively convert all NumPy and pandas types to Python native types
+    to ensure JSON serialization works correctly.
+    """
+    if data is None:
+        return None
+    elif isinstance(data, dict):
+        return {k: make_json_safe(v) for k, v in data.items()}
+    elif isinstance(data, list):
+        return [make_json_safe(item) for item in data]
+    elif isinstance(data, (np.integer, np.int64, np.int32, np.int16, np.int8)):
+        return int(data)
+    elif isinstance(data, (np.floating, np.float64, np.float32, np.float16)):
+        return float(data)
+    elif isinstance(data, (np.ndarray,)):
+        return make_json_safe(data.tolist())
+    elif isinstance(data, pd.Timestamp):
+        return data.isoformat()
+    elif isinstance(data, pd.Series):
+        return make_json_safe(data.tolist())
+    elif isinstance(data, pd.DataFrame):
+        return make_json_safe(data.to_dict(orient='records'))
+    elif isinstance(data, np.bool_):
+        return bool(data)
+    elif hasattr(data, 'to_json'):
+        # Handle objects with to_json method
+        return json.loads(data.to_json())
+    elif hasattr(data, '__dict__'):
+        # Handle custom objects by converting to dict
+        return make_json_safe(vars(data))
+    else:
+        return data
 @app.post("/upload")
 async def upload_file(file: UploadFile = File(...)):
     """
@@ -175,19 +209,28 @@ async def analyze_data(request: AnalyzeRequest, background_tasks: BackgroundTask
 
         elif intent == "filter":
             # Pass the columns of the dataframe along with the prompt to filter_data
-            print("COlumns", df.columns.tolist())
+            # print("Columns:", df.columns.tolist())
             result = analyzer.filter_data(request.prompt, df.columns.tolist())
+            print("Thes result",result)
 
         else:
             raise HTTPException(status_code=400, detail=f"Unsupported intent: {intent}")
+
+        # Check if result is a DataFrame and handle accordingly
+        if isinstance(result, pd.DataFrame):
+            if result.empty:
+                result = {"message": "No data found"}
+            else:
+                result = result.to_dict(orient="records")  # Convert DataFrame to a list of records
 
         # Update the job with result and set status to completed
         analysis_jobs[job_id]["result"] = result
         analysis_jobs[job_id]["status"] = "completed"
 
+        safe_result = make_json_safe(result)
         return {
             "job_id": job_id,
-            "result": result
+            "result": safe_result
         }
 
     except Exception as e:
@@ -195,6 +238,7 @@ async def analyze_data(request: AnalyzeRequest, background_tasks: BackgroundTask
         analysis_jobs[job_id]["status"] = "failed"
         analysis_jobs[job_id]["result"] = {"error": str(e)}
         raise HTTPException(status_code=500, detail=str(e))
+
 
 async def generate_chat_response(prompt: str, job_id: Optional[str] = None):
     """
@@ -214,18 +258,48 @@ async def generate_chat_response(prompt: str, job_id: Optional[str] = None):
     if job_info and job_info["result"]:
         result = job_info["result"]
 
-        if result["type"] == "summary":
-            data_info = result["data"]["dataset_info"]
-            yield format_data(f"Your dataset has {data_info['rows']} rows and {data_info['columns']} columns.")
-            await asyncio.sleep(0.5)
-
-            yield format_data(f"The columns are: {', '.join(data_info['column_names'][:5])}...")
-            await asyncio.sleep(0.5)
-
-            missing_values = sum(data_info['missing_values'].values())
-            if missing_values > 0:
-                yield format_data(f"There are {missing_values} missing values in the dataset.")
+        # Check the type of result before accessing it
+        if isinstance(result, dict) and "type" in result:
+            if result["type"] == "summary":
+                data_info = result["data"]["dataset_info"]
+                yield format_data(f"Your dataset has {data_info['rows']} rows and {data_info['columns']} columns.")
                 await asyncio.sleep(0.5)
+
+                yield format_data(f"The columns are: {', '.join(data_info['column_names'][:5])}...")
+                await asyncio.sleep(0.5)
+
+                missing_values = sum(data_info['missing_values'].values())
+                if missing_values > 0:
+                    yield format_data(f"There are {missing_values} missing values in the dataset.")
+                    await asyncio.sleep(0.5)
+        elif isinstance(result, list):
+            # Handle the case when result is a list (like DataFrame records)
+            records_count = len(result)
+            yield format_data(f"I found {records_count} matching records in your dataset.")
+            await asyncio.sleep(0.5)
+            
+            # Optionally show a preview of the first few records
+            if records_count > 0:
+                yield format_data("Here's a sample of what I found:")
+                await asyncio.sleep(0.5)
+                
+                # Show first 3 records or fewer if less are available
+                sample_size = min(3, records_count)
+                for i in range(sample_size):
+                    yield format_data(f"Record {i+1}: {str(result[i])}")
+                    await asyncio.sleep(0.3)
+        elif isinstance(result, dict) and "message" in result:
+            # Handle message-only results
+            yield format_data(result["message"])
+            await asyncio.sleep(0.5)
+        elif isinstance(result, dict) and "error" in result:
+            # Handle error results
+            yield format_data(f"I encountered an error: {result['error']}")
+            await asyncio.sleep(0.5)
+        else:
+            # Generic fallback for other result types
+            yield format_data(f"Analysis complete. Result type: {type(result).__name__}")
+            await asyncio.sleep(0.5)
 
     yield format_data("You can ask me more specific questions about this data if you'd like.")
     await asyncio.sleep(0.5)
@@ -249,53 +323,3 @@ if __name__ == "__main__":
 
 
 
-
-
-#     @app.post("/analyze")
-# async def analyze_data(request: AnalyzeRequest, background_tasks: BackgroundTasks):
-#     """
-#     Analyze data based on a prompt.
-#     """
-#     if request.dataset_id not in cached_datasets:
-#         raise HTTPException(status_code=404, detail="Dataset not found")
-    
-#     # Get the dataset
-#     df = cached_datasets[request.dataset_id]["df"]
-    
-#     # Create a job ID
-#     job_id = str(uuid.uuid4())
-    
-#     # Store job information
-#     analysis_jobs[job_id] = {
-#         "status": "processing",
-#         "prompt": request.prompt,
-#         "dataset_id": request.dataset_id,
-#         "result": None
-#     }
-    
-#     # For demo purposes, we'll just return a simple summary
-#     # In a real implementation, you would use NLP to determine the intent
-#     # and call the appropriate method on your DataAnalyzer class
-    
-#     # Example summary result
-#     result = {
-#         "type": "summary",
-#         "data": {
-#             "dataset_info": {
-#                 "rows": len(df),
-#                 "columns": len(df.columns),
-#                 "column_names": list(df.columns),
-#                 "missing_values": df.isnull().sum().to_dict()
-#             },
-#             "numeric_stats": df.describe().to_dict() if not df.select_dtypes(include=['number']).empty else {}
-#         }
-#     }
-    
-#     # Update job with result
-#     analysis_jobs[job_id]["result"] = result
-#     analysis_jobs[job_id]["status"] = "completed"
-    
-#     return {
-#         "job_id": job_id,
-#         "result": result
-#     }

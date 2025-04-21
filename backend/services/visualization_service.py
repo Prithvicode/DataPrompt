@@ -5,6 +5,7 @@ import io
 import base64
 import pandas as pd
 import numpy as np
+import json
 
 def create_visualization(result: Dict[str, Any], intent_type: str) -> Dict[str, Any]:
     """
@@ -17,8 +18,19 @@ def create_visualization(result: Dict[str, Any], intent_type: str) -> Dict[str, 
     Returns:
         Visualization specification
     """
+    print(f"[DEBUG] Creating visualization for intent type: {intent_type}")
+    
     if not result or "data" not in result:
+        print("[ERROR] No data available for visualization")
         return None
+    
+    # Check if chart_data is available in the result
+    if "chart_data" in result:
+        print(f"[DEBUG] Found chart_data in result with {len(result['chart_data'])} points")
+        return {
+            "type": intent_type,
+            "chart_data": result["chart_data"]
+        }
     
     if intent_type == "summary":
         return create_summary_visualization(result)
@@ -37,7 +49,10 @@ def create_summary_visualization(result: Dict[str, Any]) -> Dict[str, Any]:
     """
     Create visualization for summary results.
     """
+    print("[DEBUG] Creating summary visualization")
+    
     if "data" not in result or "dataset_info" not in result["data"]:
+        print("[ERROR] Invalid summary data structure")
         return None
     
     dataset_info = result["data"]["dataset_info"]
@@ -49,285 +64,193 @@ def create_summary_visualization(result: Dict[str, Any]) -> Dict[str, Any]:
         "Date": len(dataset_info.get("date_columns", []))
     }
     
-    plt.figure(figsize=(10, 6))
-    plt.bar(column_types.keys(), column_types.values(), color=['#4285F4', '#34A853', '#FBBC05'])
-    plt.title('Column Types Distribution')
-    plt.ylabel('Count')
-    plt.grid(axis='y', linestyle='--', alpha=0.7)
+    print(f"[DEBUG] Column types: {column_types}")
     
-    # Save plot to base64
-    buffer = io.BytesIO()
-    plt.savefig(buffer, format='png')
-    buffer.seek(0)
-    column_types_plot = base64.b64encode(buffer.read()).decode('utf-8')
-    plt.close()
+    # Create chart data in the format expected by the frontend
+    chart_data = [
+        {"month": "Column Types", "desktop": column_types["Numeric"], "mobile": column_types["Categorical"]}
+    ]
     
-    # Create missing values chart if available
-    missing_values_plot = None
+    # If there are missing values, add them to the chart
     if "missing_values" in dataset_info:
         missing_values = dataset_info["missing_values"]
-        
-        # Filter to only columns with missing values
-        missing_values = {k: v for k, v in missing_values.items() if v > 0}
-        
-        if missing_values:
-            plt.figure(figsize=(10, 6))
-            plt.bar(missing_values.keys(), missing_values.values(), color='#DB4437')
-            plt.title('Missing Values by Column')
-            plt.ylabel('Count')
-            plt.xticks(rotation=45, ha='right')
-            plt.tight_layout()
-            plt.grid(axis='y', linestyle='--', alpha=0.7)
-            
-            # Save plot to base64
-            buffer = io.BytesIO()
-            plt.savefig(buffer, format='png')
-            buffer.seek(0)
-            missing_values_plot = base64.b64encode(buffer.read()).decode('utf-8')
-            plt.close()
+        missing_count = sum(missing_values.values())
+        if missing_count > 0:
+            print(f"[DEBUG] Found {missing_count} missing values")
+            chart_data.append({"month": "Missing Values", "desktop": missing_count, "mobile": 0})
     
     return {
         "type": "summary",
-        "plots": {
-            "column_types": column_types_plot,
-            "missing_values": missing_values_plot
-        }
+        "chart_data": chart_data
     }
 
 def create_trend_visualization(result: Dict[str, Any]) -> Dict[str, Any]:
     """
     Create visualization for trend results.
     """
+    print("[DEBUG] Creating trend visualization")
+    
     if "data" not in result or not result["data"]:
+        print("[ERROR] No data available for trend visualization")
         return None
     
     data = result["data"]
-    time_column = result.get("time_column")
-    value_column = result.get("value_column")
+    time_column = result.get("time_column", "period")
+    value_column = result.get("value_column", "value")
     
-    if not time_column or not value_column:
-        return None
+    # Create chart data in the format expected by the frontend
+    chart_data = []
+    for record in data:
+        if "period" in record and "sum" in record:
+            chart_data.append({
+                "month": record["period"],
+                "desktop": float(record["sum"]),
+                "mobile": float(record.get("growth", 0)) if "growth" in record and pd.notna(record["growth"]) else 0
+            })
     
-    # Create DataFrame from data
-    df = pd.DataFrame(data)
-    
-    # Create line chart
-    plt.figure(figsize=(10, 6))
-    plt.plot(df[time_column], df["sum"], marker='o', linestyle='-', color='#4285F4')
-    plt.title(f'{value_column} Trend Over Time')
-    plt.xlabel(time_column)
-    plt.ylabel(value_column)
-    plt.grid(True, linestyle='--', alpha=0.7)
-    plt.xticks(rotation=45, ha='right')
-    plt.tight_layout()
-    
-    # Save plot to base64
-    buffer = io.BytesIO()
-    plt.savefig(buffer, format='png')
-    buffer.seek(0)
-    trend_plot = base64.b64encode(buffer.read()).decode('utf-8')
-    plt.close()
-    
-    # Create growth chart if available
-    growth_plot = None
-    if "growth" in df.columns:
-        plt.figure(figsize=(10, 6))
-        plt.bar(df[time_column], df["growth"], color=['#34A853' if x >= 0 else '#DB4437' for x in df["growth"]])
-        plt.title(f'{value_column} Period-over-Period Growth (%)')
-        plt.xlabel(time_column)
-        plt.ylabel('Growth (%)')
-        plt.grid(axis='y', linestyle='--', alpha=0.7)
-        plt.xticks(rotation=45, ha='right')
-        plt.tight_layout()
-        
-        # Save plot to base64
-        buffer = io.BytesIO()
-        plt.savefig(buffer, format='png')
-        buffer.seek(0)
-        growth_plot = base64.b64encode(buffer.read()).decode('utf-8')
-        plt.close()
+    print(f"[DEBUG] Created trend chart data with {len(chart_data)} points")
     
     return {
         "type": "trend",
-        "plots": {
-            "trend": trend_plot,
-            "growth": growth_plot
-        },
-        "visualization": {
-            "type": "line",
-            "title": f"{value_column} Trend Over Time",
-            "data": data,
-            "x": time_column,
-            "y": "sum",
-            "xLabel": time_column,
-            "yLabel": value_column
-        }
+        "chart_data": chart_data
     }
 
 def create_aggregation_visualization(result: Dict[str, Any]) -> Dict[str, Any]:
     """
     Create visualization for aggregation results.
     """
+    print("[DEBUG] Creating aggregation visualization")
+    
     if "data" not in result or not result["data"]:
+        print("[ERROR] No data available for aggregation visualization")
         return None
     
     data = result["data"]
     group_by_columns = result.get("group_by_columns", [])
     agg_column = result.get("agg_column")
-    agg_function = result.get("agg_function", "sum")
     
     if not group_by_columns or not agg_column:
+        print("[ERROR] Missing group_by_columns or agg_column")
         return None
-    
-    # Create DataFrame from data
-    df = pd.DataFrame(data)
     
     # Use the first group by column for visualization
     group_col = group_by_columns[0]
     
-    # Sort by aggregated value
-    df = df.sort_values(by=agg_column, ascending=False)
+    # Create chart data in the format expected by the frontend
+    chart_data = []
+    for record in data:
+        if group_col in record and agg_column in record:
+            chart_data.append({
+                "month": str(record[group_col]),
+                "desktop": float(record[agg_column]),
+                "mobile": 0  # No secondary metric for aggregation
+            })
     
-    # Limit to top 10 for visualization
-    if len(df) > 10:
-        df = df.head(10)
-    
-    # Create bar chart
-    plt.figure(figsize=(10, 6))
-    plt.bar(df[group_col].astype(str), df[agg_column], color='#4285F4')
-    plt.title(f'{agg_function.capitalize()} of {agg_column} by {group_col}')
-    plt.xlabel(group_col)
-    plt.ylabel(f'{agg_function.capitalize()} of {agg_column}')
-    plt.grid(axis='y', linestyle='--', alpha=0.7)
-    plt.xticks(rotation=45, ha='right')
-    plt.tight_layout()
-    
-    # Save plot to base64
-    buffer = io.BytesIO()
-    plt.savefig(buffer, format='png')
-    buffer.seek(0)
-    agg_plot = base64.b64encode(buffer.read()).decode('utf-8')
-    plt.close()
+    print(f"[DEBUG] Created aggregation chart data with {len(chart_data)} points")
     
     return {
         "type": "aggregation",
-        "plots": {
-            "aggregation": agg_plot
-        },
-        "visualization": {
-            "type": "bar",
-            "title": f"{agg_function.capitalize()} of {agg_column} by {group_col}",
-            "data": data,
-            "x": group_col,
-            "y": agg_column,
-            "xLabel": group_col,
-            "yLabel": f"{agg_function.capitalize()} of {agg_column}"
-        }
+        "chart_data": chart_data
     }
 
 def create_forecast_visualization(result: Dict[str, Any]) -> Dict[str, Any]:
     """
     Create visualization for forecast results.
     """
-    # If we already have a plot, use it
-    if "plot" in result:
-        return {
-            "type": "forecast",
-            "plots": {
-                "forecast": result["plot"]
-            }
-        }
+    print("[DEBUG] Creating forecast visualization")
     
     if "data" not in result or not result["data"]:
+        print("[ERROR] No data available for forecast visualization")
         return None
     
     data = result["data"]
-    target_column = result.get("target_column")
     
-    if not target_column:
-        return None
+    # Create chart data in the format expected by the frontend
+    chart_data = []
+    for record in data:
+        if "period" in record and "value" in record:
+            chart_data.append({
+                "month": record["period"],
+                "desktop": float(record["value"]),
+                "mobile": float(record.get("profit", 0)) if "profit" in record else 0
+            })
     
-    # Create DataFrame from data
-    df = pd.DataFrame(data)
-    
-    # Create line chart
-    plt.figure(figsize=(10, 6))
-    
-    # Plot historical data
-    historical = df[df["is_forecast"] == False]
-    plt.plot(historical["period"], historical["value"], marker='o', linestyle='-', color='#4285F4', label='Historical')
-    
-    # Plot forecast data
-    forecast = df[df["is_forecast"] == True]
-    if not forecast.empty:
-        plt.plot(forecast["period"], forecast["value"], marker='o', linestyle='--', color='#FBBC05', label='Forecast')
-    
-    plt.title(f'Forecast for {target_column}')
-    plt.xlabel('Period')
-    plt.ylabel(target_column)
-    plt.grid(True, linestyle='--', alpha=0.7)
-    plt.xticks(rotation=45, ha='right')
-    plt.legend()
-    plt.tight_layout()
-    
-    # Save plot to base64
-    buffer = io.BytesIO()
-    plt.savefig(buffer, format='png')
-    buffer.seek(0)
-    forecast_plot = base64.b64encode(buffer.read()).decode('utf-8')
-    plt.close()
+    print(f"[DEBUG] Created forecast chart data with {len(chart_data)} points")
     
     return {
         "type": "forecast",
-        "plots": {
-            "forecast": forecast_plot
-        },
-        "visualization": {
-            "type": "line",
-            "title": f"Forecast for {target_column}",
-            "data": data,
-            "x": "period",
-            "y": "value",
-            "series": "is_forecast",
-            "xLabel": "Period",
-            "yLabel": target_column
-        }
+        "chart_data": chart_data
     }
 
 def create_filter_visualization(result: Dict[str, Any]) -> Dict[str, Any]:
     """
     Create visualization for filter results.
     """
+    print("[DEBUG] Creating filter visualization")
+    
     if "data" not in result or not result["data"]:
+        print("[ERROR] No data available for filter visualization")
         return None
     
     data = result["data"]
     
-    # For filtered data, we'll create a simple table visualization
+    # For filtered data, try to find numeric columns to visualize
+    if not data or not isinstance(data, list) or len(data) == 0:
+        print("[ERROR] Invalid or empty data for filter visualization")
+        return None
+    
+    # Get the first record to determine columns
+    first_record = data[0]
+    numeric_cols = []
+    
+    # Find numeric columns
+    for key, value in first_record.items():
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            numeric_cols.append(key)
+    
+    print(f"[DEBUG] Found {len(numeric_cols)} numeric columns for filter visualization")
+    
+    if not numeric_cols:
+        print("[WARNING] No numeric columns found for visualization")
+        return None
+    
+    # Use the first two numeric columns for visualization
+    primary_col = numeric_cols[0] if numeric_cols else None
+    secondary_col = numeric_cols[1] if len(numeric_cols) > 1 else None
+    
+    # Create chart data in the format expected by the frontend
+    chart_data = []
+    for i, record in enumerate(data[:10]):  # Limit to 10 records for visualization
+        if primary_col:
+            chart_data.append({
+                "month": f"Record {i+1}",
+                "desktop": float(record.get(primary_col, 0)),
+                "mobile": float(record.get(secondary_col, 0)) if secondary_col else 0
+            })
+    
+    print(f"[DEBUG] Created filter chart data with {len(chart_data)} points")
+    
     return {
         "type": "filter",
-        "visualization": {
-            "type": "table",
-            "title": "Filtered Data",
-            "data": data[:100]  # Limit to 100 rows
-        }
+        "chart_data": chart_data
     }
 
 def create_generic_visualization(result: Dict[str, Any]) -> Dict[str, Any]:
     """
     Create a generic visualization for query results.
     """
-    if "data" not in result or not result["data"]:
+    print("[DEBUG] Creating generic visualization")
+    
+    if "data" not in result:
+        print("[ERROR] No data available for generic visualization")
         return None
     
     data = result["data"]
     
-    # For generic queries, we'll create a simple table visualization
-    return {
-        "type": "query",
-        "visualization": {
-            "type": "table",
-            "title": "Query Results",
-            "data": data[:100]  # Limit to 100 rows
-        }
-    }
+    # If data is a list of dictionaries, try to visualize it
+    if isinstance(data, list) and len(data) > 0 and isinstance(data[0], dict):
+        return create_filter_visualization(result)
+    
+    # Otherwise, no visualization
+    print("[WARNING] Cannot create visualization for this data type")
+    return None
