@@ -15,7 +15,6 @@ import numpy as np
 from services.file_service import save_file, get_dataset, list_datasets
 from services.nlp_service import classify_intent, stream_llama_response
 from services.data_service import DataAnalyzer
-from services.forecast_service import ForecastService
 from services.visualization_service import create_visualization
 
 
@@ -204,6 +203,9 @@ async def analyze_data(request: AnalyzeRequest, background_tasks: BackgroundTask
         elif intent == "forecast":
             result = analyzer.forecast(request.prompt, **parameters)
 
+        elif intent == "whatif":
+            result = analyzer.what_if_analysis(request.prompt, **parameters)
+            
         elif intent == "aggregation":
             result = analyzer.aggregate(request.prompt, **parameters)
 

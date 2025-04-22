@@ -415,25 +415,30 @@ export default function ChatComponent() {
       {/* Data Visualization Sidebar */}
       <div
         className={cn(
-          "fixed top-0 right-0 h-full w-[600px] bg-gray-900 border-l border-gray-800 transition-all duration-300 ease-in-out transform",
+          "fixed top-0 right-0 h-full w-full sm:w-[500px] md:w-[600px] lg:w-[700px] xl:w-[800px] 2xl:w-[900px] bg-gray-900 border-l border-gray-800 shadow-lg transition-all duration-300 ease-in-out transform z-50",
           showSidebar && hasData ? "translate-x-0" : "translate-x-full"
         )}
       >
         <div className="h-full flex flex-col">
-          <div className="border-b border-gray-800 p-4 flex justify-between items-center">
+          {/* Header */}
+          <div className="border-b border-gray-800 p-4 flex justify-between items-center bg-gray-900">
             <div className="flex items-center gap-2">
               <BarChart className="h-5 w-5 text-blue-400" />
-              <h2 className="font-semibold">Data Analysis</h2>
+              <h2 className="font-semibold text-white text-lg">
+                Data Analysis
+              </h2>
             </div>
             <button
               onClick={() => setShowSidebar(false)}
-              className="p-1 rounded-md hover:bg-gray-800 transition-colors"
+              className="p-2 rounded-md hover:bg-gray-800 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500"
               aria-label="Close sidebar"
             >
-              <X className="h-5 w-5" />
+              <X className="h-5 w-5 text-gray-300" />
             </button>
           </div>
-          <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
+
+          {/* Scrollable content */}
+          <div className="flex-1 overflow-y-auto p-6 custom-scrollbar bg-gray-900">
             <DataView />
           </div>
         </div>

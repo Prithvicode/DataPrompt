@@ -6,9 +6,15 @@ import requests
 import re
 import traceback
 from datetime import datetime, timedelta
+import json
 
-from services.nlp_service import generate_panda_code_from_prompt
-from services.prepare_data_for_prediction import predict_sales, forecast_weekly_sales, forecast_monthly_sales
+# from services.prepare_data_for_prediction import forecast_weekly_sales, forecast_monthly_sales  # Adjust to your actual import path
+from dateutil.parser import parse as parse_date
+
+from services.nlp_service import generate_panda_code_from_prompt, classify_forecast_intent
+from services.forecast_service import forecast_revenue, process_user_query  
+
+# from services.prepare_data_for_prediction import predict_sales, forecast_weekly_sales, forecast_monthly_sales
 
 OLLAMA_URL = "http://localhost:11434/api/chat"
 MODEL_NAME = "llama3.2"
@@ -59,12 +65,72 @@ class DataAnalyzer:
         print(f"[DEBUG] Column metadata generated with {len(metadata)} columns")
         return result
 
+    # def generate_summary(self) -> Dict[str, Any]:
+    #     """
+    #     Generate a structured summary of the dataset.
+    #     """
+    #     print("[DEBUG] Generating dataset summary")
+    #     df = self.df
+    #     summary = {
+    #         "dataset_info": {
+    #             "rows": len(df),
+    #             "columns": len(df.columns),
+    #             "column_names": df.columns.tolist(),
+    #             "numeric_columns": self.numeric_columns,
+    #             "categorical_columns": self.categorical_columns,
+    #             "date_columns": self.date_columns,
+    #             "missing_values": df.isnull().sum().to_dict()
+    #         }
+    #     }
+
+    #     # Numeric statistics
+    #     if self.numeric_columns:
+    #         print(f"[DEBUG] Calculating statistics for {len(self.numeric_columns)} numeric columns")
+    #         summary["numeric_stats"] = df[self.numeric_columns].describe().to_dict()
+
+    #     # Categorical statistics
+    #     if self.categorical_columns:
+    #         print(f"[DEBUG] Calculating statistics for {len(self.categorical_columns)} categorical columns")
+    #         summary["categorical_stats"] = {
+    #             col: {
+    #                 "unique_values": df[col].nunique(),
+    #                 "top_values": df[col].value_counts().head(10).to_dict()
+    #             }
+    #             for col in self.categorical_columns
+    #         }
+
+    #     # Date statistics
+    #     if self.date_columns:
+    #         print(f"[DEBUG] Calculating statistics for {len(self.date_columns)} date columns")
+    #         date_stats = {}
+    #         for col in self.date_columns:
+    #             try:
+    #                 date_series = pd.to_datetime(df[col])
+    #                 date_stats[col] = {
+    #                     "min_date": date_series.min().isoformat(),
+    #                     "max_date": date_series.max().isoformat(),
+    #                     "range_days": (date_series.max() - date_series.min()).days
+    #                 }
+    #                 print(f"[DEBUG] Date stats for {col}: range = {date_stats[col]['range_days']} days")
+    #             except Exception as e:
+    #                 print(f"[ERROR] Error calculating date stats for {col}: {str(e)}")
+    #                 date_stats[col] = {"error": str(e)}
+    #         summary["date_stats"] = date_stats
+
+    #     print("[DEBUG] Summary generation complete")
+    #     return {
+    #         "type": "summary",
+    #         "data": summary
+    #     }
+    
     def generate_summary(self) -> Dict[str, Any]:
         """
-        Generate a structured summary of the dataset.
+        Generate a structured summary of the dataset with enhanced insights for visualization.
         """
-        print("[DEBUG] Generating dataset summary")
+        print("[DEBUG] Generating enhanced dataset summary")
         df = self.df
+        
+        # Base summary structure
         summary = {
             "dataset_info": {
                 "rows": len(df),
@@ -74,26 +140,160 @@ class DataAnalyzer:
                 "categorical_columns": self.categorical_columns,
                 "date_columns": self.date_columns,
                 "missing_values": df.isnull().sum().to_dict()
-            }
+            },
+            "charts_data": {}  # Data specifically formatted for Recharts
         }
-
+        
         # Numeric statistics
         if self.numeric_columns:
             print(f"[DEBUG] Calculating statistics for {len(self.numeric_columns)} numeric columns")
             summary["numeric_stats"] = df[self.numeric_columns].describe().to_dict()
-
-        # Categorical statistics
+            
+            # Revenue and profit trends by time period (for time series charts)
+            if all(col in df.columns for col in ['Revenue', 'Profit', 'Month', 'Year']):
+                monthly_performance = df.groupby(['Year', 'Month']).agg({
+                    'Revenue': 'sum',
+                    'Profit': 'sum',
+                    'UnitsSold': 'sum'
+                }).reset_index()
+                
+                # Format for time series chart
+                summary["charts_data"]["monthly_performance"] = [
+                    {
+                        "date": f"{int(row['Year'])}-{int(row['Month']):02d}",
+                        "revenue": round(row['Revenue'], 2),
+                        "profit": round(row['Profit'], 2),
+                        "unitsSold": int(row['UnitsSold'])
+                    }
+                    for _, row in monthly_performance.iterrows()
+                ]
+                
+            # Product performance metrics (for bar/pie charts)
+            if all(col in df.columns for col in ['ProductCategory', 'Revenue', 'Profit']):
+                product_performance = df.groupby('ProductCategory').agg({
+                    'Revenue': 'sum',
+                    'Profit': 'sum',
+                    'UnitsSold': 'sum',
+                    'OrderID': 'nunique'
+                }).reset_index()
+                
+                # Calculate additional metrics
+                product_performance['AverageOrderValue'] = product_performance['Revenue'] / product_performance['OrderID']
+                product_performance['ProfitPerUnit'] = product_performance['Profit'] / product_performance['UnitsSold']
+                
+                # Format for category comparison charts
+                summary["charts_data"]["product_category_performance"] = [
+                    {
+                        "category": row['ProductCategory'],
+                        "revenue": round(row['Revenue'], 2),
+                        "profit": round(row['Profit'], 2),
+                        "unitsSold": int(row['UnitsSold']),
+                        "orders": int(row['OrderID']),
+                        "avgOrderValue": round(row['AverageOrderValue'], 2),
+                        "profitPerUnit": round(row['ProfitPerUnit'], 2)
+                    }
+                    for _, row in product_performance.iterrows()
+                ]
+                
+            # Regional performance (for map or comparison charts)
+            if 'Region' in df.columns:
+                regional_performance = df.groupby('Region').agg({
+                    'Revenue': 'sum',
+                    'Profit': 'sum',
+                    'UnitsSold': 'sum',
+                    'OrderID': 'nunique'
+                }).reset_index()
+                
+                # Format for regional charts
+                summary["charts_data"]["regional_performance"] = [
+                    {
+                        "region": row['Region'],
+                        "revenue": round(row['Revenue'], 2),
+                        "profit": round(row['Profit'], 2),
+                        "unitsSold": int(row['UnitsSold']),
+                        "orders": int(row['OrderID'])
+                    }
+                    for _, row in regional_performance.iterrows()
+                ]
+                
+            # Promotion effectiveness (for comparison charts)
+            if 'PromotionApplied' in df.columns:
+                promotion_effect = df.groupby('PromotionApplied').agg({
+                    'Revenue': 'sum',
+                    'Profit': 'sum',
+                    'UnitsSold': 'sum',
+                    'ProfitMargin': 'mean'
+                }).reset_index()
+                
+                # Format for promotion comparison
+                summary["charts_data"]["promotion_effectiveness"] = [
+                    {
+                        "promotionApplied": bool(row['PromotionApplied']),
+                        "revenue": round(row['Revenue'], 2),
+                        "profit": round(row['Profit'], 2),
+                        "unitsSold": int(row['UnitsSold']),
+                        "avgProfitMargin": round(row['ProfitMargin'] * 100, 2)
+                    }
+                    for _, row in promotion_effect.iterrows()
+                ]
+                
+            # Customer segment analysis
+            if 'CustomerSegment' in df.columns:
+                segment_analysis = df.groupby('CustomerSegment').agg({
+                    'Revenue': 'sum',
+                    'Profit': 'sum',
+                    'UnitsSold': 'sum',
+                    'OrderID': 'nunique'
+                }).reset_index()
+                
+                segment_analysis['AvgRevenuePerOrder'] = segment_analysis['Revenue'] / segment_analysis['OrderID']
+                
+                # Format for segment comparison
+                summary["charts_data"]["customer_segments"] = [
+                    {
+                        "segment": row['CustomerSegment'],
+                        "revenue": round(row['Revenue'], 2),
+                        "profit": round(row['Profit'], 2),
+                        "unitsSold": int(row['UnitsSold']),
+                        "avgRevenuePerOrder": round(row['AvgRevenuePerOrder'], 2)
+                    }
+                    for _, row in segment_analysis.iterrows()
+                ]
+        
+        # Categorical statistics with enhanced insights
         if self.categorical_columns:
             print(f"[DEBUG] Calculating statistics for {len(self.categorical_columns)} categorical columns")
             summary["categorical_stats"] = {
                 col: {
                     "unique_values": df[col].nunique(),
-                    "top_values": df[col].value_counts().head(10).to_dict()
+                    "top_values": df[col].value_counts().head(10).to_dict(),
+                    "distribution": [
+                        {"name": str(k), "value": int(v)} 
+                        for k, v in df[col].value_counts().head(10).items()
+                    ]
                 }
                 for col in self.categorical_columns
             }
-
-        # Date statistics
+            
+            # Seasonal trends (if applicable)
+            if 'Holiday' in df.columns:
+                holiday_impact = df.groupby('Holiday').agg({
+                    'Revenue': 'sum',
+                    'UnitsSold': 'sum',
+                    'FootTraffic': 'mean' if 'FootTraffic' in df.columns else 'count'
+                }).reset_index()
+                
+                summary["charts_data"]["holiday_impact"] = [
+                    {
+                        "holiday": bool(row['Holiday']),
+                        "revenue": round(row['Revenue'], 2),
+                        "unitsSold": int(row['UnitsSold']),
+                        "avgFootTraffic": round(row['FootTraffic'], 2)
+                    }
+                    for _, row in holiday_impact.iterrows()
+                ]
+        
+        # Date statistics with enhanced time series data
         if self.date_columns:
             print(f"[DEBUG] Calculating statistics for {len(self.date_columns)} date columns")
             date_stats = {}
@@ -105,13 +305,115 @@ class DataAnalyzer:
                         "max_date": date_series.max().isoformat(),
                         "range_days": (date_series.max() - date_series.min()).days
                     }
+                    
+                    # Create time series distribution
+                    if col == 'OrderDate':
+                        # Daily order counts for timeline chart
+                        daily_orders = df.groupby(date_series.dt.date).size().reset_index()
+                        daily_orders.columns = ['date', 'count']
+                        
+                        # Format for timeline chart
+                        summary["charts_data"]["daily_order_volume"] = [
+                            {
+                                "date": date.isoformat(),
+                                "orders": int(count)
+                            }
+                            for date, count in zip(daily_orders['date'], daily_orders['count'])
+                        ]
+                        
+                        # Weekday distribution
+                        weekday_distribution = df.groupby(date_series.dt.day_name()).size().reset_index()
+                        weekday_distribution.columns = ['weekday', 'count']
+                        
+                        # Ensure proper weekday ordering
+                        weekday_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+                        weekday_distribution['weekday_order'] = weekday_distribution['weekday'].map(
+                            {day: i for i, day in enumerate(weekday_order)}
+                        )
+                        weekday_distribution = weekday_distribution.sort_values('weekday_order')
+                        
+                        # Format for weekday distribution chart
+                        summary["charts_data"]["weekday_distribution"] = [
+                            {
+                                "weekday": weekday,
+                                "orders": int(count)
+                            }
+                            for weekday, count in zip(weekday_distribution['weekday'], weekday_distribution['count'])
+                        ]
+                    
                     print(f"[DEBUG] Date stats for {col}: range = {date_stats[col]['range_days']} days")
                 except Exception as e:
                     print(f"[ERROR] Error calculating date stats for {col}: {str(e)}")
                     date_stats[col] = {"error": str(e)}
+            
             summary["date_stats"] = date_stats
-
-        print("[DEBUG] Summary generation complete")
+        
+        # Additional insights
+        # Temperature impact on sales (if temperature data exists)
+        if 'Temperature' in df.columns:
+            # Group by temperature ranges
+            df['TempRange'] = pd.cut(df['Temperature'], 
+                                    bins=[0, 10, 20, 30, 40, 100], 
+                                    labels=['0-10', '10-20', '20-30', '30-40', '40+'])
+            
+            temp_impact = df.groupby('TempRange').agg({
+                'UnitsSold': 'sum',
+                'Revenue': 'sum',
+                'FootTraffic': 'mean' if 'FootTraffic' in df.columns else 'count'
+            }).reset_index()
+            
+            summary["charts_data"]["temperature_impact"] = [
+                {
+                    "tempRange": str(row['TempRange']),
+                    "unitsSold": int(row['UnitsSold']),
+                    "revenue": round(row['Revenue'], 2),
+                    "footTraffic": round(row['FootTraffic'], 2)
+                }
+                for _, row in temp_impact.iterrows() if not pd.isna(row['TempRange'])
+            ]
+        
+        # Profit margin distribution (for histogram)
+        if 'ProfitMargin' in df.columns:
+            # Create bins for profit margin distribution
+            margin_bins = [-0.5, 0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+            margin_labels = ['Loss', '0-10%', '10-20%', '20-30%', '30-40%', '40-50%', 
+                            '50-60%', '60-70%', '70-80%', '80-90%', '90-100%']
+            
+            df['MarginRange'] = pd.cut(df['ProfitMargin'], 
+                                    bins=margin_bins,
+                                    labels=margin_labels)
+            
+            margin_dist = df.groupby('MarginRange').size().reset_index()
+            margin_dist.columns = ['range', 'count']
+            
+            summary["charts_data"]["profit_margin_distribution"] = [
+                {
+                    "range": str(range_name),
+                    "count": int(count)
+                }
+                for range_name, count in zip(margin_dist['range'], margin_dist['count'])
+                if not pd.isna(range_name)
+            ]
+        
+        # Product performance over time
+        if all(col in df.columns for col in ['ProductCategory', 'Month', 'Year', 'Revenue']):
+            product_time = df.groupby(['ProductCategory', 'Year', 'Month']).agg({
+                'Revenue': 'sum',
+                'Profit': 'sum'
+            }).reset_index()
+            
+            # Format for stacked/grouped bar or line chart
+            summary["charts_data"]["product_category_time_series"] = [
+                {
+                    "date": f"{int(row['Year'])}-{int(row['Month']):02d}",
+                    "category": row['ProductCategory'],
+                    "revenue": round(row['Revenue'], 2),
+                    "profit": round(row['Profit'], 2)
+                }
+                for _, row in product_time.iterrows()
+            ]
+        
+        print("[DEBUG] Enhanced summary generation complete")
         return {
             "type": "summary",
             "data": summary
@@ -248,108 +550,6 @@ class DataAnalyzer:
                 }
             }
 
-        """
-        Filter the DataFrame based on the user's query and return the resulting DataFrame.
-        """
-        # Add explicit instructions for the LLM to generate better filtering code
-        augmented_prompt = f"""
-        Create pandas code to filter the following DataFrame with columns: {df_columns}.
-        Based on this request: "{prompt}"
-        
-        IMPORTANT GUIDELINES:
-        1. Make sure your code assigns the filtered result back to 'df'
-        2. For selecting top N rows by a value, use: df = df.nlargest(N, 'column_name')
-        3. For filtering by condition, use: df = df[df['column_name'] > value]
-        4. Always check if the columns you're using exist in the dataframe
-        5. Return ONLY executable pandas code without explanations
-        """
-        
-        code = generate_panda_code_from_prompt(augmented_prompt, df_columns)
-        print("Generated code from LLM:", code)
-        
-        # Preprocessing step to validate and fix common errors in the generated code
-        try:
-            # Check for common mistakes in the generated code and attempt to fix them
-            if 'nlargest' in code and '[df' in code:
-                # Fix the syntax for nlargest improperly used inside indexing brackets
-                match = re.search(r'df\s*=\s*df\s*\[\s*df\s*\[\s*[\'"](\w+)[\'"]\s*\]\s*\.nlargest\s*\(\s*(\d+)\s*\)\s*\]', code)
-                if match:
-                    column, n = match.groups()
-                    code = f"df = df.nlargest({n}, '{column}')"
-                    print(f"[DEBUG] Fixed nlargest syntax: {code}")
-            
-            # Ensure all column references are valid
-            for col in re.findall(r"df\['([^']+)'\]", code):
-                if col not in df_columns:
-                    raise ValueError(f"Generated code references non-existent column: {col}")
-        
-        except Exception as e:
-            # If we can't fix the code, log the error and generate a safer alternative
-            print(f"[DEBUG] Error preprocessing code: {str(e)}")
-            # Fallback to a safer template based on the prompt analysis
-            if 'largest' in prompt.lower() or 'highest' in prompt.lower() or 'top' in prompt.lower():
-                # Extract possible numeric values and column names from the prompt
-                numbers = re.findall(r'\b(\d+)\b', prompt)
-                n = int(numbers[0]) if numbers else 5  # Default to top 5 if no number specified
-                
-                # Try to identify the column to sort by from the prompt
-                possible_columns = [col for col in df_columns if col.lower() in prompt.lower()]
-                if not possible_columns and 'revenue' in prompt.lower():
-                    possible_columns = [col for col in df_columns if 'revenue' in col.lower() or 'sales' in col.lower() or 'amount' in col.lower()]
-                
-                sort_column = possible_columns[0] if possible_columns else df_columns[0]
-                code = f"df = df.nlargest({n}, '{sort_column}')"
-                print(f"[DEBUG] Fallback to safe template: {code}")
-        
-        try:
-            # Execute the code with safety measures
-            local_vars = {'df': self.df.copy()}
-            
-            # Add a timeout mechanism to prevent infinite loops (if supported in your environment)
-            exec(code, {}, local_vars)
-            
-            # Check if the result is a valid DataFrame
-            result_df = local_vars.get('df')
-            if not isinstance(result_df, pd.DataFrame):
-                print(f"[DEBUG] Result is not a DataFrame, type: {type(result_df)}")
-                return self.df
-            
-            # Validate the result isn't empty unless that was explicitly intended
-            if result_df.empty and not self.df.empty:
-                print("[DEBUG] Filtering produced an empty DataFrame, returning original")
-                return self.df
-                
-            print(f"[DEBUG] Filtering successful - original size: {len(self.df)}, filtered size: {len(result_df)}")
-            return result_df
-                
-        except Exception as e:
-            print(f"Error executing generated code: {str(e)}")
-            traceback.print_exc()
-            
-            # Try one more time with a very simple approach if we're looking for top values
-            if 'largest' in prompt.lower() or 'highest' in prompt.lower() or 'top' in prompt.lower():
-                try:
-                    # Find numeric columns that might be relevant
-                    numeric_cols = [col for col in df_columns if col in self.df.select_dtypes(include=['number']).columns]
-                    if numeric_cols:
-                        # Look for relevant columns based on prompt keywords
-                        possible_cols = [col for col in numeric_cols if col.lower() in prompt.lower()]
-                        if not possible_cols:
-                            possible_cols = [col for col in numeric_cols if any(kw in col.lower() for kw in ['revenue', 'sales', 'price', 'amount', 'profit'])]
-                        
-                        sort_col = possible_cols[0] if possible_cols else numeric_cols[0]
-                        n = 5  # Default to top 5
-                        numbers = re.findall(r'\b(\d+)\b', prompt)
-                        if numbers:
-                            n = int(numbers[0])
-                        
-                        result_df = self.df.nlargest(n, sort_col)
-                        print(f"[DEBUG] Recovery filter applied: top {n} rows by {sort_col}")
-                        return result_df
-                except Exception as recovery_error:
-                    print(f"[DEBUG] Recovery filtering failed: {str(recovery_error)}")
-            
-            return self.df  # Fall back to the original DataFrame if all else fails
     def execute_query(self, query: str, chat_history: List[Dict[str, str]] = None) -> Dict[str, Any]:
         """
         Execute a custom query using LLM to generate pandas code.
@@ -704,179 +904,63 @@ class DataAnalyzer:
                 "message": f"Error aggregating data: {str(e)}"
             }
     
-    def forecast(self, prompt: str, **parameters) -> Dict[str, Any]:
+    def forecast(self, prompt: str, **parameters):
         """
-        Generate forecasts using the pre-trained model.
+        Forecast sales based on the user's prompt and the provided parameters.
+        This method integrates with the LLM to determine what time range the user is asking for.
         """
         try:
-            print(f"[DEBUG] Generating forecast with prompt: {prompt}")
+            print(f"[DEBUG] Forecasting with prompt: {prompt}")
             
-            # Step 1: Determine forecast parameters from the prompt
-            
-            # Determine forecast period (weeks or months)
-            period = "month"  # Default to monthly
-            if "weekly" in prompt.lower() or "week" in prompt.lower():
-                period = "week"
-                print("[DEBUG] Using weekly forecast period")
-            else:
-                print("[DEBUG] Using monthly forecast period")
-            
-            # Determine number of periods to forecast
-            periods = 3  # Default to 3 periods
-            period_match = re.search(r"(\d+)\s+(?:weeks|months|periods)", prompt.lower())
-            if period_match:
-                periods = int(period_match.group(1))
-                print(f"[DEBUG] Found {periods} periods to forecast")
-            
-            # Determine target column (what to forecast)
-            target_col = None
-            target_keywords = ["revenue", "sales", "profit", "units"]
-            for keyword in target_keywords:
-                if keyword in prompt.lower():
-                    # Find a column that matches this keyword
-                    for col in self.numeric_columns:
-                        if keyword in col.lower():
-                            target_col = col
-                            print(f"[DEBUG] Found target column from keyword: {target_col}")
-                            break
-                    if target_col:
-                        break
-            
-            # If no target column found, use Revenue or the first numeric column
-            if not target_col:
-                if "Revenue" in self.df.columns:
-                    target_col = "Revenue"
-                    print(f"[DEBUG] Using default target column: {target_col}")
-                elif self.numeric_columns:
-                    target_col = self.numeric_columns[0]
-                    print(f"[DEBUG] Using default target column: {target_col}")
-                else:
-                    print("[ERROR] Could not identify target column for forecast")
-                    return {
-                        "type": "error",
-                        "message": "Could not identify target column for forecast."
-                    }
-            
-            # Step 2: Extract product categories, names, regions, and segments if available
-            product_categories = []
-            product_names = []
-            regions = []
-            segments = []
-            
-            # Check if these columns exist in the dataframe
-            if "ProductCategory" in self.df.columns:
-                product_categories = self.df["ProductCategory"].unique().tolist()
-                print(f"[DEBUG] Found {len(product_categories)} product categories")
-            
-            if "ProductName" in self.df.columns:
-                product_names = self.df["ProductName"].unique().tolist()
-                print(f"[DEBUG] Found {len(product_names)} product names")
-            
-            if "Region" in self.df.columns:
-                regions = self.df["Region"].unique().tolist()
-                print(f"[DEBUG] Found {len(regions)} regions")
-            
-            if "CustomerSegment" in self.df.columns:
-                segments = self.df["CustomerSegment"].unique().tolist()
-                print(f"[DEBUG] Found {len(segments)} customer segments")
-            
-            # If any of these are empty, use defaults
-            if not product_categories:
-                product_categories = ["Default"]
-            if not product_names:
-                product_names = ["Default"]
-            if not regions:
-                regions = ["Default"]
-            if not segments:
-                segments = ["Default"]
-            
-            # Step 3: Generate the forecast
-            print(f"[DEBUG] Generating {period} forecast for {periods} periods")
-            
-            # Get current date
-            today = datetime.now()
-            start_date = today.strftime('%Y-%m-%d')
-            
-            # Generate forecast
-            if period == "week":
-                forecast_df = forecast_weekly_sales(
-                    start_date=start_date,
-                    weeks=periods,
-                    product_categories=product_categories,
-                    product_names=product_names,
-                    regions=regions,
-                    segments=segments
-                )
-                print(f"[DEBUG] Generated weekly forecast with shape: {forecast_df.shape}")
-            else:
-                forecast_df = forecast_monthly_sales(
-                    start_date=start_date,
-                    months=periods,
-                    product_categories=product_categories,
-                    product_names=product_names,
-                    regions=regions,
-                    segments=segments
-                )
-                print(f"[DEBUG] Generated monthly forecast with shape: {forecast_df.shape}")
-            
-            # Step 4: Prepare the result
-            
-            # Group by time period for overall forecast
-            if period == "week":
-                time_group = forecast_df.groupby(['Year', 'Week'])
-                time_label = 'Week'
-            else:
-                time_group = forecast_df.groupby(['Year', 'Month'])
-                time_label = 'Month'
-            
-            # Calculate aggregates
-            agg_data = time_group.agg({
-                'PredictedRevenue': 'sum',
-                'PredictedProfit': 'sum'
-            }).reset_index()
-            
-            # Create time period label
-            if period == "week":
-                agg_data['Period'] = agg_data['Year'].astype(str) + '-W' + agg_data['Week'].astype(str)
-            else:
-                agg_data['Period'] = agg_data['Year'].astype(str) + '-' + agg_data['Month'].astype(str)
-            
-            # Prepare the result data
-            result_data = []
-            for _, row in agg_data.iterrows():
-                result_data.append({
-                    "period": row['Period'],
-                    "value": float(row['PredictedRevenue']),
-                    "profit": float(row['PredictedProfit']),
-                    "is_forecast": True
-                })
-            
-            print(f"[DEBUG] Prepared {len(result_data)} records for forecast result")
-            
-            # Create visualization data in the format expected by the frontend
-            chart_data = []
-            for record in result_data:
-                chart_data.append({
-                    "month": record["period"],
-                    "desktop": float(record["value"]),
-                    "mobile": float(record["profit"])
-                })
-            
-            print(f"[DEBUG] Prepared chart data with {len(chart_data)} points")
+            # Step 1: Classify the intent of the forecast
+            model_response = classify_forecast_intent(prompt, df_columns= self.df.columns.tolist())
+            # Parse the string response to a dictionary
+            try:
+                intentResponse = json.loads(model_response)
+            except json.JSONDecodeError as e:
+                print(f"[ERROR] Failed to parse intent response: {e}")
+                raise ValueError("Failed to parse forecast intent response as JSON.")
+
+            print(f"[DEBUG] Classified intent: {intentResponse}")
+
+            period_type = intentResponse.get("periodType", "weekly")
+            period_ahead = intentResponse.get("periods_ahead", 1)  # Default to 1 week/month if not specified
+            target_variable = intentResponse.get("target_variable", "Revenue")
+            filters = intentResponse.get("filters")
+
+            predictions = forecast_revenue(period_type=period_type, periods_ahead=period_ahead, df=self.df)
+            print(f"[DEBUG] Predictions : {predictions}")
             
             return {
                 "type": "forecast",
-                "target_column": target_col,
-                "period": period,
-                "num_periods": periods,
-                "data": result_data,
-                "chart_data": chart_data
+               "data": predictions,
             }
+
+
+            
+      
+            
+        #     # Step 3: Generate predictions based on the classified intent
+        #     predictions = {
+        #         "type": "forecast",
+        #         "intent": intent,
+        #         "data": forecast_data
+        #     }
+            
+        #     print(f"[DEBUG] Forecasting complete, predictions shape: {len(predictions['data'])}")
             
         except Exception as e:
-            print(f"[ERROR] Error generating forecast: {str(e)}")
+            print(f"[ERROR] Error during forecasting: {str(e)}")
             print(f"[ERROR] Traceback: {traceback.format_exc()}")
             return {
                 "type": "error",
-                "message": f"Error generating forecast: {str(e)}"
+                "message": f"Error during forecasting: {str(e)}"
             }
+       
+        # return predictions
+
+    def what_if_analysis(self, prompt: str, **parameters):
+        print(f"[DEBUG] Forecasting with prompt: {prompt}")
+        result_df, query_type, message = process_user_query(self.df, query=prompt)
+        print(f"[DEBUG] Result DataFrame: {result_df.head()}")
+        

@@ -1,380 +1,331 @@
 import pandas as pd
 import numpy as np
-from typing import Dict, Any, List, Optional
-from statsmodels.tsa.arima.model import ARIMA
-from statsmodels.tsa.holtwinters import ExponentialSmoothing
-import matplotlib.pyplot as plt
-import io
-import base64
+import pickle
+import os
+from datetime import datetime, timedelta
+from dateutil.relativedelta import relativedelta
+import re
 
-class ForecastService:
+# FILE_PATH = os.path.join(os.path.dirname(__file__), "cleaned_dataset.csv")
+global model_data, theta, feature_cols, scaler, current_df
+model_data = None
+theta = None
+feature_cols = None
+scaler = None
+current_df = None
+
+def forecast_revenue( df, period_type='monthly', periods_ahead=3,):
+    global model_data, theta, feature_cols, scaler
     """
-    Service for generating forecasts from time series data.
-    """
-    def __init__(self, df: pd.DataFrame):
-        self.df = df
-        self.original_df = df.copy()
+    Forecast revenue for future periods
     
-    def generate_forecast(
-        self, 
-        target_column: Optional[str] = None,
-        time_column: Optional[str] = None,
-        periods: int = 6
-    ) -> Dict[str, Any]:
-        """
-        Generate a forecast for the target column.
+    Parameters:
+    - period_type: 'weekly', 'monthly', or 'yearly'
+    - periods_ahead: number of periods to forecast
+    - df_path: path to the original data file
+    
+    Returns:
+    - DataFrame with forecasted values
+    """
+
+    MODEL_PATH = os.path.join(os.path.dirname(__file__), "linear_model.pkl")
+    with open(MODEL_PATH, "rb") as f:
+        model_data = pickle.load(f)
+    
+    theta = model_data['theta']
+    feature_cols = model_data['feature_cols']
+    scaler = model_data['scaler']
+    
+    # Load the dataset
+    # df = pd.read_csv(df_path)
+    
+    # Group by the specified period to get the most recent data patterns
+    if period_type == 'weekly':
+        time_col = 'Week'
+        groupby_cols = ['Year', 'Week']
+    elif period_type == 'monthly':
+        time_col = 'Month'
+        groupby_cols = ['Year', 'Month']
+    elif period_type == 'yearly':
+        time_col = 'Year'
+        groupby_cols = ['Year']
+    else:
+        raise ValueError("period_type must be 'weekly', 'monthly', or 'yearly'")
+    
+    # Get the latest features by averaging the most recent period's data
+    df_encoded = pd.get_dummies(df, columns=['ProductCategory', 'ProductName', 'Region', 'CustomerSegment'], drop_first=True)
+    
+    # Drop non-numeric columns
+    for col in df_encoded.columns:
+        if df_encoded[col].dtype == 'object':
+            df_encoded = df_encoded.drop(columns=[col], errors='ignore')
+    
+    df_encoded = df_encoded.fillna(df_encoded.mean(numeric_only=True))
+    
+    # Get latest period data
+    if period_type == 'yearly':
+        latest_year = df_encoded['Year'].max()
+        latest_data = df_encoded[df_encoded['Year'] == latest_year]
+    elif period_type == 'monthly':
+        latest_year = df_encoded['Year'].max()
+        latest_month = df_encoded[df_encoded['Year'] == latest_year]['Month'].max()
+        latest_data = df_encoded[(df_encoded['Year'] == latest_year) & (df_encoded['Month'] == latest_month)]
+    else:  # weekly
+        latest_year = df_encoded['Year'].max()
+        latest_week = df_encoded[df_encoded['Year'] == latest_year]['Week'].max()
+        latest_data = df_encoded[(df_encoded['Year'] == latest_year) & (df_encoded['Week'] == latest_week)]
+    
+    # Calculate the average feature values for the latest period
+    latest_features = latest_data[feature_cols].mean().values.reshape(1, -1)
+    
+    # Scale the features
+    X_latest_scaled = scaler.transform(latest_features)
+    X_latest_scaled = np.hstack((np.ones((X_latest_scaled.shape[0], 1)), X_latest_scaled))
+    
+    # Create forecasts
+    forecasts = []
+    current_period = {'Year': latest_year}
+    
+    if period_type == 'monthly':
+        current_period['Month'] = latest_month
+    elif period_type == 'weekly':
+        current_period['Week'] = latest_week
+    
+    for i in range(1, periods_ahead + 1):
+        # Update the period
+        if period_type == 'yearly':
+            current_period['Year'] += 1
+        elif period_type == 'monthly':
+            current_period['Month'] += 1
+            if current_period['Month'] > 12:
+                current_period['Month'] = 1
+                current_period['Year'] += 1
+        elif period_type == 'weekly':
+            current_period['Week'] += 1
+            if current_period['Week'] > 52:  # simplified; actual weeks per year may vary
+                current_period['Week'] = 1
+                current_period['Year'] += 1
         
-        Args:
-            target_column: Column to forecast
-            time_column: Column containing time data
-            periods: Number of periods to forecast
-            
-        Returns:
-            Dictionary with forecast results
-        """
-        # Auto-detect columns if not provided
-        if not target_column or not time_column:
-            detected_columns = self._detect_time_series_columns()
-            if not target_column and detected_columns["target_column"]:
-                target_column = detected_columns["target_column"]
-            if not time_column and detected_columns["time_column"]:
-                time_column = detected_columns["time_column"]
+        # Make prediction
+        prediction = X_latest_scaled @ theta
         
-        if not target_column or not time_column:
-            return {
-                "type": "error",
-                "message": "Could not identify appropriate target and time columns for forecasting."
-            }
-        
+        forecast_data = current_period.copy()
+        forecast_data['Forecasted_Revenue'] = prediction[0][0]
+        forecasts.append(forecast_data)
+    
+    # Create DataFrame with forecasts
+    forecast_df = pd.DataFrame(forecasts)
+    
+    return forecast_df
+
+
+
+
+def preprocess_new_data(df, feature_cols):
+    """Preprocess new data to match the training data format"""
+    # Handle date column if present
+    if 'OrderDate' in df.columns:
         try:
-            # Prepare the data
-            df_copy = self.df.copy()
-            
-            # Convert time column to datetime if it's not already
-            df_copy[time_column] = pd.to_datetime(df_copy[time_column], errors='coerce')
-            
-            # Drop rows with NaN in time or target columns
-            df_copy = df_copy.dropna(subset=[time_column, target_column])
-            
-            # Sort by time
-            df_copy = df_copy.sort_values(by=time_column)
-            
-            # Set time column as index
-            df_copy = df_copy.set_index(time_column)
-            
-            # Resample to regular frequency
-            # Determine appropriate frequency
-            time_diff = df_copy.index.to_series().diff().median()
-            
-            if time_diff.days >= 28:
-                freq = 'M'  # Monthly
-            elif time_diff.days >= 7:
-                freq = 'W'  # Weekly
-            else:
-                freq = 'D'  # Daily
-            
-            # Resample
-            resampled = df_copy[target_column].resample(freq).mean()
-            
-            # Fill missing values
-            resampled = resampled.interpolate()
-            
-            # Split data into train and test
-            train_size = int(len(resampled) * 0.8)
-            train, test = resampled[:train_size], resampled[train_size:]
-            
-            # Generate forecast
-            forecast_data = []
-            historical_data = []
-            
-            # Add historical data
-            for date, value in resampled.items():
-                historical_data.append({
-                    "period": date.strftime('%Y-%m-%d'),
-                    "value": float(value),
-                    "is_forecast": False
-                })
-            
-            # Try different models and use the best one
-            best_model = None
-            best_mse = float('inf')
-            best_forecast = None
-            
-            # Try ARIMA
-            try:
-                model = ARIMA(train, order=(2,1,2))
-                model_fit = model.fit()
-                
-                # Make predictions on test set
-                predictions = model_fit.forecast(steps=len(test))
-                
-                # Calculate MSE
-                mse = np.mean((predictions - test) ** 2)
-                
-                if mse < best_mse:
-                    best_mse = mse
-                    best_model = "ARIMA"
-                    
-                    # Generate forecast
-                    forecast = model_fit.forecast(steps=periods)
-                    best_forecast = forecast
-            except:
-                pass
-            
-            # Try Exponential Smoothing
-            try:
-                model = ExponentialSmoothing(train, trend='add', seasonal='add', seasonal_periods=4)
-                model_fit = model.fit()
-                
-                # Make predictions on test set
-                predictions = model_fit.forecast(len(test))
-                
-                # Calculate MSE
-                mse = np.mean((predictions - test) ** 2)
-                
-                if mse < best_mse:
-                    best_mse = mse
-                    best_model = "Exponential Smoothing"
-                    
-                    # Generate forecast
-                    forecast = model_fit.forecast(periods)
-                    best_forecast = forecast
-            except:
-                pass
-            
-            # If no model worked, use a simple moving average
-            if best_model is None:
-                # Use simple moving average
-                window = min(3, len(resampled))
-                ma = resampled.rolling(window=window).mean()
-                
-                # Calculate MSE on test set
-                ma_test = ma[train_size:]
-                ma_test = ma_test.dropna()
-                
-                if len(ma_test) > 0 and len(test) > 0:
-                    # Align indices
-                    common_idx = ma_test.index.intersection(test.index)
-                    if len(common_idx) > 0:
-                        mse = np.mean((ma_test[common_idx] - test[common_idx]) ** 2)
-                        best_mse = mse
-                        best_model = "Moving Average"
-                
-                # Generate forecast
-                last_value = resampled.iloc[-1]
-                forecast = pd.Series([last_value] * periods)
-                
-                # Set index for forecast
-                last_date = resampled.index[-1]
-                if freq == 'M':
-                    forecast.index = pd.date_range(start=last_date + pd.DateOffset(months=1), periods=periods, freq=freq)
-                elif freq == 'W':
-                    forecast.index = pd.date_range(start=last_date + pd.DateOffset(weeks=1), periods=periods, freq=freq)
-                else:
-                    forecast.index = pd.date_range(start=last_date + pd.DateOffset(days=1), periods=periods, freq=freq)
-                
-                best_forecast = forecast
-            
-            # Add forecast data
-            if best_forecast is not None:
-                for date, value in best_forecast.items():
-                    forecast_data.append({
-                        "period": date.strftime('%Y-%m-%d'),
-                        "value": float(value),
-                        "is_forecast": True
-                    })
-            
-            # Calculate metrics
-            metrics = {
-                "mse": float(best_mse),
-                "r2": max(0, 1 - best_mse / np.var(test)) if len(test) > 0 else 0
-            }
-            
-            # Generate plot
-            plt.figure(figsize=(10, 6))
-            plt.plot(resampled.index, resampled.values, label='Historical')
-            if best_forecast is not None:
-                plt.plot(best_forecast.index, best_forecast.values, label='Forecast', linestyle='--')
-            plt.title(f'Forecast for {target_column}')
-            plt.xlabel('Date')
-            plt.ylabel(target_column)
-            plt.legend()
-            plt.grid(True)
-            
-            # Save plot to base64
-            buffer = io.BytesIO()
-            plt.savefig(buffer, format='png')
-            buffer.seek(0)
-            plot_data = base64.b64encode(buffer.read()).decode('utf-8')
-            plt.close()
-            
-            # Calculate summary
-            last_value = resampled.iloc[-1]
-            forecast_end = best_forecast.iloc[-1] if best_forecast is not None else last_value
-            percent_change = ((forecast_end - last_value) / last_value) * 100
-            
-            direction = "increase" if percent_change > 0 else "decrease"
-            summary = f"{target_column} is forecasted to {direction} by {abs(percent_change):.1f}% over the next {periods} periods."
-            
-            return {
-                "type": "forecast",
-                "target_column": target_column,
-                "time_column": time_column,
-                "model": best_model,
-                "periods": periods,
-                "metrics": metrics,
-                "summary": summary,
-                "data": historical_data + forecast_data,
-                "plot": plot_data
-            }
-        except Exception as e:
-            return {
-                "type": "error",
-                "message": f"Error generating forecast: {str(e)}"
-            }
+            df['OrderDate'] = pd.to_datetime(df['OrderDate'])
+        except:
+            pass  # Keep as is if conversion fails
     
-    def _detect_time_series_columns(self) -> Dict[str, str]:
-        """
-        Auto-detect appropriate columns for time series analysis.
+    # Encode categoricals - same as training
+    categorical_cols = ['ProductCategory', 'ProductName', 'Region', 'CustomerSegment']
+    existing_cats = [col for col in categorical_cols if col in df.columns]
+    
+    if existing_cats:
+        df_encoded = pd.get_dummies(df, columns=existing_cats, drop_first=True)
+    else:
+        df_encoded = df.copy()
+    
+    # Drop non-numeric columns
+    for col in df_encoded.columns:
+        if df_encoded[col].dtype == 'object':
+            df_encoded = df_encoded.drop(columns=[col], errors='ignore')
+    
+    df_encoded = df_encoded.fillna(df_encoded.mean(numeric_only=True))
+    
+    # Create feature set that matches the training data
+    feature_set = pd.DataFrame()
+    for col in feature_cols:
+        if col in df_encoded.columns:
+            feature_set[col] = df_encoded[col]
+        else:
+            feature_set[col] = 0
+    
+    X = feature_set.values.astype(np.float64)
+    
+    return X, df_encoded
+
+def predict_revenue(X, theta, scaler):
+    """Make revenue predictions using the trained model"""
+    X_scaled = scaler.transform(X)
+    X_scaled = np.hstack((np.ones((X_scaled.shape[0], 1)), X_scaled))  # Add bias term
+    predictions = X_scaled @ theta
+    return predictions
+
+
+def forecast_next_months(df, num_months=3):
+    """Forecast revenue for the next n months"""
+    global theta, feature_cols, scaler
+    
+    # Get the most recent date in the dataset
+    if 'OrderDate' in df.columns and pd.api.types.is_datetime64_any_dtype(df['OrderDate']):
+        last_date = df['OrderDate'].max()
+    elif 'OrderDate' in df.columns:
+        try:
+            df['OrderDate'] = pd.to_datetime(df['OrderDate'])
+            last_date = df['OrderDate'].max()
+        except:
+            last_date = datetime.now()
+    else:
+        # If no date column, use current date
+        last_date = datetime.now()
+    
+    # Create forecast dataframe by replicating the most recent month's data
+    latest_data = df.iloc[-1:].copy()
+    forecast_frames = []
+    
+    for i in range(1, num_months + 1):
+        next_period = latest_data.copy()
+        next_date = last_date + relativedelta(months=i)
         
-        Returns:
-            Dictionary with time_column and target_column
-        """
-        time_column = None
-        target_column = None
+        # Update date information
+        if 'OrderDate' in next_period.columns:
+            next_period['OrderDate'] = next_date
+        if 'Month' in next_period.columns:
+            next_period['Month'] = next_date.month
+        if 'Year' in next_period.columns:
+            next_period['Year'] = next_date.year
+        if 'Week' in next_period.columns:
+            next_period['Week'] = next_date.isocalendar()[1]
         
-        # Look for date/time columns
-        date_columns = []
-        for col in self.df.columns:
-            # Check if column name suggests a date
-            if any(term in col.lower() for term in ['date', 'time', 'year', 'month', 'day']):
-                date_columns.append(col)
-                continue
-            
-            # Try to convert to datetime
-            if self.df[col].dtype == 'object':
-                try:
-                    pd.to_datetime(self.df[col])
-                    date_columns.append(col)
-                except:
-                    pass
-        
-        # If we found date columns, use the first one
-        if date_columns:
-            time_column = date_columns[0]
-        
-        # Look for numeric columns that might be targets
-        numeric_columns = self.df.select_dtypes(include=['number']).columns.tolist()
-        
-        # Prioritize columns with certain keywords
-        for col in numeric_columns:
-            if any(term in col.lower() for term in ['sales', 'revenue', 'profit', 'price', 'cost', 'amount', 'value']):
-                target_column = col
+        forecast_frames.append(next_period)
+    
+    forecast_df = pd.concat(forecast_frames, ignore_index=True)
+    
+    # Preprocess and predict
+    X, processed_df = preprocess_new_data(forecast_df, feature_cols)
+    predictions = predict_revenue(X, theta, scaler)
+    
+    # Add predictions to the forecast dataframe
+    forecast_df['Predicted_Revenue'] = predictions
+    
+    return forecast_df
+
+
+def what_if_scenario(df, scenario_params):
+    """
+    Run what-if scenarios based on parameter changes
+    
+    Args:
+        df: Input dataframe
+        scenario_params: Dictionary of parameters to change and their percentage changes
+                        e.g., {'UnitsSold': 1.10} for 10% increase in UnitsSold
+    
+    Returns:
+        DataFrame with predictions based on the scenario
+    """
+    global theta, feature_cols, scaler
+    
+    # Create a copy for the scenario
+    scenario_df = df.copy()
+    
+    # Apply changes based on scenario parameters
+    for param, change_factor in scenario_params.items():
+        if param in scenario_df.columns:
+            scenario_df[param] = scenario_df[param] * change_factor
+    
+    # Preprocess and predict
+    X, processed_df = preprocess_new_data(scenario_df, feature_cols)
+    predictions = predict_revenue(X, theta, scaler)
+    
+    # Add predictions to the scenario dataframe
+    scenario_df['Predicted_Revenue'] = predictions
+    
+    return scenario_df
+
+def process_user_query(df, query):
+    """
+    Process user query based on the DataFrame
+    
+    Args:
+        df: DataFrame with sales data
+        query: User query as a string
+    
+    Returns:
+        Result dataframe, query type, and message
+    """
+    global theta, feature_cols, scaler
+
+    print("[DEBUG] Processing user query:", query, flush=True)
+    
+    message = ""
+    query_type = "general"
+    
+    # Determine query type and execute
+    if "next" in query.lower() and "month" in query.lower():
+        # Extract number of months (default to 3)
+        num_months = 3
+        for i in range(1, 13):
+            if str(i) in query:
+                num_months = i
                 break
         
-        # If no target found, use the first numeric column
-        if not target_column and numeric_columns:
-            target_column = numeric_columns[0]
+        message = f"Forecasting next {num_months} months revenue"
+        query_type = "forecast"
+        result_df = forecast_next_months(df, num_months)
         
-        return {
-            "time_column": time_column,
-            "target_column": target_column
-        }
+    elif ("if" in query.lower() or "what if" in query.lower()) and ("increase" in query.lower() or "decrease" in query.lower()):
+        # Extract parameter and percentage
+        scenario_params = {}
+        print(f"[DEBUG] Scenario params: {scenario_params}")
+        # Check common parameters
+        params = ["unitssold", "unitprice", "costperunit", "foottraffic"]
+        for param in params:
+            if param.lower() in query.lower():
+                # Try to extract percentage
+                percentage_matches = re.findall(r'(\d+)(?:\s*%)?\s*(?:increase|decrease)', query.lower())
+                percentage = float(percentage_matches[0]) if percentage_matches else 10
+                
+                # Determine if increase or decrease
+                change_factor = 1 + (percentage / 100) if "increase" in query.lower() else 1 - (percentage / 100)
+                
+                # Find the actual column name with proper case
+                actual_param = next((col for col in df.columns if col.lower() == param.lower()), None)
+                if actual_param:
+                    scenario_params[actual_param] = change_factor
+                    message = f"Running scenario: {actual_param} {'increased' if change_factor > 1 else 'decreased'} by {abs((change_factor-1)*100):.0f}%"
+        
+        query_type = "what-if"
+        result_df = what_if_scenario(df, scenario_params)
+        
+    else:
+        # Default to basic prediction
+        message = "Making revenue predictions on the data"
+        query_type = "predict"
+        X, processed_df = preprocess_new_data(df, feature_cols)
+        predictions = predict_revenue(X, theta, scaler)
+        
+        result_df = df.copy()
+        result_df['Predicted_Revenue'] = predictions
+    print("[DEBUG] Result DataFrame:", result_df.head(), flush=True)
+    return result_df, query_type, message
 
 
-# from sklearn.preprocessing import LabelEncoder
-# from sklearn.metrics import mean_squared_error, r2_score
-# import pickle
-# import numpy as np
-# import pandas as pd
-# import matplotlib.pyplot as plt
-# import io
-# import base64
 
-# def preprocess_data(df):
-#     """Preprocess the input dataframe for prediction"""
-#     data = df.copy()
-    
-#     # Fill missing values
-#     for col in data.columns:
-#         if data[col].dtype in ['int64', 'float64']:
-#             data[col] = data[col].fillna(data[col].mean())
-#         else:
-#             data[col] = data[col].fillna(data[col].mode()[0])
-    
-#     # Initialize LabelEncoder
-#     encoder = LabelEncoder()
-    
-#     # Encode categorical columns
-#     categorical_columns = data.select_dtypes(include=['object']).columns
-#     for col in categorical_columns:
-#         data[col] = encoder.fit_transform(data[col])
-    
-#     return data
+# # For monthly forecasts (next 6 months)
+# monthly_forecast = forecast_revenue(period_type='monthly', periods_ahead=6)
+# print("Monthly Revenue Forecast:")
+# print(monthly_forecast)
 
-# def load_model():
-#     """Load the saved linear regression model"""
-#     try:
-#         with open('services/linear_regression_model (2).pkl', 'rb') as f:
-#             model = pickle.load(f)
-#         return model
-#     except Exception as e:
-#         raise Exception(f"Error loading model: {str(e)}")
+# # For weekly forecasts (next 8 weeks)
+# weekly_forecast = forecast_revenue(period_type='weekly', periods_ahead=8)
+# print("\nWeekly Revenue Forecast:")
+# print(weekly_forecast)
 
-# def predict(X, theta):
-#     """Make predictions using the model coefficients"""
-#     return np.dot(X, theta)
-
-# def make_prediction(data):
-#     """Make predictions using the loaded model"""
-#     try:
-#         # Preprocess the data
-#         processed_data = preprocess_data(data)
-        
-#         # Load the model coefficients
-#         theta = load_model()
-        
-#         # Prepare features
-#         X = processed_data.values
-        
-#         # Add bias term (column of ones)
-#         X = np.hstack([np.ones((X.shape[0], 1)), X])
-        
-#         # Make predictions
-#         predictions = predict(X, theta)
-        
-#         # Calculate metrics if target variable is available
-#         metrics = {}
-#         if 'Item_Outlet_Sales' in data.columns:
-#             metrics['mse'] = mean_squared_error(data['Item_Outlet_Sales'], predictions)
-#             metrics['r2'] = r2_score(data['Item_Outlet_Sales'], predictions)
-#         else:
-#             metrics['mse'] = None
-#             metrics['r2'] = None
-        
-#         # Create visualization
-#         plt.figure(figsize=(10, 6))
-#         if 'Item_Outlet_Sales' in data.columns:
-#             plt.scatter(data['Item_Outlet_Sales'], predictions)
-#             plt.xlabel('Actual Sales')
-#             plt.ylabel('Predicted Sales')
-#         else:
-#             plt.plot(predictions)
-#             plt.xlabel('Data Points')
-#             plt.ylabel('Predicted Sales')
-#         plt.title('Sales Predictions')
-        
-#         # Save plot to base64 string
-#         buffer = io.BytesIO()
-#         plt.savefig(buffer, format='png')
-#         buffer.seek(0)
-#         plot_base64 = base64.b64encode(buffer.getvalue()).decode()
-#         plt.close()
-        
-#         return {
-#             'predictions': predictions.tolist(),
-#             'metrics': metrics,
-#             'plot': plot_base64
-#         }
-#     except Exception as e:
-#         raise Exception(f"Error making predictions: {str(e)}") 
+# # For yearly forecasts (next 3 years)
+# yearly_forecast = forecast_revenue(period_type='yearly', periods_ahead=3)
+# print("\nYearly Revenue Forecast:")
+# print(yearly_forecast)

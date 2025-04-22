@@ -11,7 +11,7 @@ def classify_intent(prompt: str, chat_history: List[Dict[str, str]] = None) -> D
     print(f"[DEBUG] Prompt from user: {prompt}")
 
     base_prompt = f"""
-You are an AI that classifies data analysis queries into one of these intents: summary, trend, aggregation, forecast, filter, or query.
+You are an AI that classifies data analysis queries into one of these intents: summary, trend, aggregation, forecast, whatif, filter, or query.
 Respond with only one word representing the intent.
 Do not include any other text.
 
@@ -29,7 +29,7 @@ Prompt: {prompt}
         model_response = response_json.get("response", "").strip().lower()
         print(f"[DEBUG] LLM response: {model_response}",flush=True)
 
-        valid_intents = {"summary", "trend", "aggregation", "forecast", "filter", "query"}
+        valid_intents = {"summary", "trend", "aggregation", "forecast", "filter", "query", "whatif"}
         if model_response in valid_intents:
             return {"intent": model_response, "parameters": {}}
         else:
@@ -186,4 +186,78 @@ User prompt: {prompt}
     return model_response
 
 
+def classify_forecast_intent(prompt: str, df_columns: List[str]):
+    """
+    Classifies the forecast intent and extracts parameters (time range, target variable).
+    """
+    base_prompt = f"""
+You are a Python assistant who helps generate forecasts and 'What-If' scenarios based on user prompts. These are the exact columns of the DataFrame: {df_columns}.
+
+The user has provided a dataset with revenue forecasting capabilities, and you need to extract key parameters from their request.
+
+Your task is to:
+1. If the user is asking for a forecast:
+   - Identify the time range (e.g., "monthly", "weekly", "yearly", or number of specific periods like "3 months"). If not specified, use "monthly" as default with 3 periods ahead.
+   - Identify the target variable the user is asking for (e.g., "Revenue", "Sales"). If not specified, use "Revenue" as default.
+   - Identify how many periods ahead they want to forecast (e.g., "next 6 months", "next 4 weeks"). If not specified, use 3 as default.
+   - Identify if any other filters need to be applied, like product category, region, or customer segment. If not mentioned, use "All" as default.
+
+2. If the user is asking for 'What-If' scenarios:
+   - Identify the columns and their current values the user wants to change.
+   - Identify the new values for those columns in the 'What-If' scenario.
+
+Provide the output in the following JSON format:
+
+1. **For Forecasting:**
+{{
+    "forecast": {{
+        "period_type": "monthly",  
+        "periods_ahead": 3,  
+        "target_variable": "Revenue",  
+        "filters": {{
+            "ProductCategory": "All",
+            "Region": "All",
+            "CustomerSegment": "All"
+        }}
+    }}
+}}
+
+2. **For What-If Scenarios:**
+{{
+    "what_if_scenarios": {{
+        "ProductPriceIncrease": {{
+            "column": "UnitPrice",
+            "old_value": 30,
+            "new_value": 35
+        }},
+        "IncreasedFootTraffic": {{
+            "column": "FootTraffic",
+            "old_value": 120,
+            "new_value": 150
+        }}
+    }}
+}}
+
+Here is the user's prompt: {prompt}
+
+Return ONLY the JSON object with no additional text.
+"""
+
+
+
+    response = requests.post(
+        OLLAMA_URL,
+        json={"model": MODEL_NAME, "prompt": base_prompt, "stream": False}
+    )
+    response.raise_for_status()
+    response_json = response.json()
+    
+    model_response = response_json.get("response", "").strip()
+    
+    print(f"[DEBUG] Forecast Intent Response: {model_response}")
+
+    # Example of expected response format: 
+    # {"time_range": "2 months", "target_variables": ["Revenue", "Profit"], "promotion": "Yes", "region": "West"}
+    
+    return model_response
 
