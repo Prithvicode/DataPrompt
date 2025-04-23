@@ -22,6 +22,7 @@ import { EmptyState } from "./EmptyState";
 import { Sidebar } from "./Sidebar";
 import { SuggestionGrid } from "./SuggestionGrid";
 import PredictionResults from "./chat/PredictResults";
+import { Loader } from "./Loader";
 
 export default function ChatComponent() {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -421,6 +422,7 @@ export default function ChatComponent() {
                 isStreaming={!!streamContent}
                 streamContent={streamContent}
               />
+              {loading && !streamContent && <Loader loading={loading} />}
               <div ref={messagesEndRef} />
             </div>
 

@@ -289,9 +289,8 @@ async def generate_chat_response(prompt: str, job_id: Optional[str] = None):
                 prediction_data = result["data"]
                 target = result.get("target", "value")
                 # The fix is here - yield the formatted chunks instead of printing them
-                async for chunk in stream_llama_response("Say hello"):
-                    yield format_data(chunk)
-                    # await asyncio.sleep(0.1)  # Small delay between chunks
+                yield format_data(f"I predicted revenues.")
+                   
 
         elif isinstance(result, list):
             # Handle the case when result is a list (like DataFrame records)
