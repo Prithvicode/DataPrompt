@@ -11,7 +11,7 @@ import json
 # from services.prepare_data_for_prediction import forecast_weekly_sales, forecast_monthly_sales  # Adjust to your actual import path
 from dateutil.parser import parse as parse_date
 
-from services.nlp_service import generate_panda_code_from_prompt, classify_forecast_intent
+from services.nlp_service import generate_panda_code_from_prompt, classify_forecast_intent, parse_whatif_scenarios
 from services.forecast_service import process_and_predict
 
 # from services.prepare_data_for_prediction import predict_sales, forecast_weekly_sales, forecast_monthly_sales
@@ -961,10 +961,8 @@ class DataAnalyzer:
         # return predictions
 
     def what_if_analysis(self, prompt: str, **parameters):
-        print(f"[DEBUG] Forecasting with prompt: {prompt}")
-        result_df, query_type, message = process_user_query(self.df, query=prompt)
-        print(f"[DEBUG] Result DataFrame: {result_df.head()}")
-        
+        feature_input = parse_whatif_scenarios(prompt, self.df.columns.tolist())
+        print(f"[DEBUG] What-if analysis input: {feature_input}")
     
     def predict(self, prompt: str, **parameters):
         print("DEBUG] Predicting with prompt: ", prompt)

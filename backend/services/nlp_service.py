@@ -96,9 +96,6 @@ async def test_stream():
         print(chunk, end="", flush=True)
     print("\n\nStreaming complete.")
 
-# Only run if executed as a script
-if __name__ == "__main__":
-    asyncio.run(test_stream())
 
 # def stream_llama_response(
 #     prompt: str, 
@@ -283,3 +280,56 @@ Return ONLY the JSON object with no additional text.
     
     return model_response
 
+
+
+def parse_whatif_scenarios(prompt: str,
+                           chat_history: List[Dict[str, str]] = None
+                          ) -> List[Dict]:
+    """
+    Calls the LLM to extract what-if scenarios as JSON.
+    Returns a list of dicts; if the LLM returns nothing, returns [].
+    """
+    base_prompt = f"""
+User prompt: {prompt}
+Extract and return _only_ the values in this exact format (with your numbers/strings filled in), no extra text:
+
+{{
+  'UnitsSold': <int>,
+  'UnitPrice': <float>,
+  'CostPerUnit': <float>,
+  'PromotionApplied': <0 or 1>,
+  'Holiday': <0 or 1>,
+  'Temperature': <float>,
+  'FootTraffic': <int>,
+  'ProductCategory': '<string>',
+  'ProductName': '<string>',
+  'Region': '<string>',
+  'CustomerSegment': '<string>',
+  'ProfitPerUnit': <float>,       # = UnitPrice - CostPerUnit  
+  'Profit': <float>,              # = UnitsSold * ProfitPerUnit  
+  'ProfitMargin': <float>         # = ProfitPerUnit / UnitPrice  
+}}
+"""
+
+
+    response = requests.post(
+        OLLAMA_URL,
+        json={
+            "model": MODEL_NAME,
+            "prompt": base_prompt,
+            "stream": False
+        }
+    )
+    response.raise_for_status()
+    response_json = response.json()
+    
+    model_response = response_json.get("response", "").strip()
+    
+    print(f"[DEBUG] Extracted prediciton features  Response: {model_response}")
+   
+
+if __name__ == "__main__":
+    user_prompt = "What if UnitsSold increases by 10% and UnitPrice goes up by 20 absolute for Electronics→Smartphone in North/Retail, with promo applied and holiday status 0, temp 25, foot traffic 400?"
+    scenarios = parse_whatif_scenarios(user_prompt)
+    # scenarios is now a list of dicts you can feed into what_if_predict()
+    print(scenarios)
