@@ -79,7 +79,7 @@ def process_and_predict(df):
                 }
                 for _, row in new_data_with_predictions.iterrows()
             ],
-            "x": "OrderID",
+            "x": "OrderID", 
             "y": ["ActualRevenue", "PredictedRevenue"],
             "title": "Predicted vs Actual Revenue",
             "xLabel": "Order ID",
