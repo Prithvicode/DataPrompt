@@ -210,6 +210,9 @@ async def analyze_data(request: AnalyzeRequest, background_tasks: BackgroundTask
         elif intent == "forecast":
             result = analyzer.forecast(request.prompt, **parameters)
 
+        elif intent == "predict":
+            result = analyzer.predict(request.prompt, **parameters)
+
         elif intent == "whatif":
             result = analyzer.what_if_analysis(request.prompt, **parameters)
             
@@ -281,6 +284,15 @@ async def generate_chat_response(prompt: str, job_id: Optional[str] = None):
                 if missing_values > 0:
                     yield format_data(f"There are {missing_values} missing values in the dataset.")
                     await asyncio.sleep(0.5)
+            
+            elif result["type"] == "predict":
+                prediction_data = result["data"]
+                target = result.get("target", "value")
+                # The fix is here - yield the formatted chunks instead of printing them
+                async for chunk in stream_llama_response("Say hello"):
+                    yield format_data(chunk)
+                    # await asyncio.sleep(0.1)  # Small delay between chunks
+
         elif isinstance(result, list):
             # Handle the case when result is a list (like DataFrame records)
             records_count = len(result)
@@ -310,8 +322,8 @@ async def generate_chat_response(prompt: str, job_id: Optional[str] = None):
             yield format_data(f"Analysis complete. Result type: {type(result).__name__}")
             await asyncio.sleep(0.5)
 
-    yield format_data("You can ask me more specific questions about this data if you'd like.")
-    await asyncio.sleep(0.5)
+    # yield format_data("You can ask me more specific questions about this data if you'd like.")
+    # await asyncio.sleep(0.5)
 
     # Signal the end
     yield "data: [DONE]\n\n"

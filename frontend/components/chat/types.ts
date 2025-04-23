@@ -28,11 +28,13 @@ export interface AnalysisResult {
     type: string;
     data: any[];
     x: string;
-    y: string;
+    y: string | string[];
     title: string;
     xLabel: string;
     yLabel: string;
   };
+  mae?: number;
+  r2?: number;
   metrics?: {
     mse?: number;
     r2?: number;

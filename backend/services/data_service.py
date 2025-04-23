@@ -12,7 +12,7 @@ import json
 from dateutil.parser import parse as parse_date
 
 from services.nlp_service import generate_panda_code_from_prompt, classify_forecast_intent
-from services.forecast_service import forecast_revenue, process_user_query  
+from services.forecast_service import process_and_predict
 
 # from services.prepare_data_for_prediction import predict_sales, forecast_weekly_sales, forecast_monthly_sales
 
@@ -418,6 +418,7 @@ class DataAnalyzer:
             "type": "summary",
             "data": summary
         }
+    
     def filter_data(self, prompt: str, df_columns: List[str]):
         """
         Filter the DataFrame based on the user's query and return the resulting DataFrame.
@@ -964,3 +965,16 @@ class DataAnalyzer:
         result_df, query_type, message = process_user_query(self.df, query=prompt)
         print(f"[DEBUG] Result DataFrame: {result_df.head()}")
         
+    
+    def predict(self, prompt: str, **parameters):
+        print("DEBUG] Predicting with prompt: ", prompt)
+        result_df, mae, r2, visualization = process_and_predict(self.df)
+        print(f"[DEBUG] Result DataFrame: {result_df.head()}")
+
+        return {
+            "type" : "predict",
+            "data": result_df,
+            "mae" : mae,
+            "r2" : r2,
+            "visualization" : visualization
+        }

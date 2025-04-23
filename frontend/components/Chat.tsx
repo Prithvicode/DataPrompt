@@ -21,6 +21,7 @@ import { EmptyState } from "./EmptyState";
 
 import { Sidebar } from "./Sidebar";
 import { SuggestionGrid } from "./SuggestionGrid";
+import PredictionResults from "./chat/PredictResults";
 
 export default function ChatComponent() {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -305,6 +306,25 @@ export default function ChatComponent() {
         return <DataSummary data={analysisResult.data} />;
       case "forecast":
         return <ForecastResults data={analysisResult} />;
+      case "predict":
+        return (
+          <PredictionResults
+            data={analysisResult.data}
+            mae={analysisResult.mae ?? 0}
+            r2={analysisResult.r2 ?? 0}
+            visualization={
+              analysisResult.visualization ?? {
+                type: "",
+                data: [],
+                x: "",
+                y: "",
+                title: "",
+                xLabel: "",
+                yLabel: "",
+              }
+            }
+          />
+        );
       case "aggregation":
         return <AggregationResults data={analysisResult} />;
       case "filter":
