@@ -1,5 +1,12 @@
 "use client";
 
+import { ChartContainer, ChartTooltipContent } from "@/components/ui/chart";
+import {
+  CHART_COLORS,
+  CHART_GRADIENTS,
+  formatCurrency,
+  chartConfig,
+} from "@/lib/chart-utils";
 import {
   Bar,
   BarChart,
@@ -13,7 +20,6 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { ChartContainer, ChartTooltipContent } from "@/components/ui/chart";
 
 interface CustomerSegmentChartProps {
   data: {
@@ -23,33 +29,17 @@ interface CustomerSegmentChartProps {
   }[];
 }
 
-// Nepali Rupees formatter
-const formatNrs = (value: number) =>
-  `Nrs ${value.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`;
-
-// Random but consistent color palette
-const chartColors = [
-  "#6366F1", // Indigo
-  "#10B981", // Emerald
-  "#F59E0B", // Amber
-  "#EF4444", // Red
-  "#3B82F6", // Blue
-  "#8B5CF6", // Violet
-];
-
 export function CustomerSegmentChart({ data }: CustomerSegmentChartProps) {
   return (
-    <div className="grid gap-6">
-      {/* Pie Chart */}
+    <div className="grid gap-8 animate-fade-in">
       <ChartContainer
         config={{
-          Online: { label: "Online", color: chartColors[0] },
-          Retail: { label: "Retail", color: chartColors[1] },
-          Wholesale: { label: "Wholesale", color: chartColors[2] },
+          revenue: { label: "Revenue", color: CHART_COLORS.primary },
+          profit: { label: "Profit", color: CHART_COLORS.secondary },
         }}
-        className="h-[300px]"
+        className="h-[350px] p-4"
       >
-        <ResponsiveContainer width="100%" height="100%">
+        <ResponsiveContainer {...chartConfig.responsiveContainer}>
           <PieChart>
             <Pie
               data={data}
@@ -57,9 +47,9 @@ export function CustomerSegmentChart({ data }: CustomerSegmentChartProps) {
               nameKey="segment"
               cx="50%"
               cy="50%"
-              outerRadius={100}
+              outerRadius={120}
               innerRadius={60}
-              paddingAngle={2}
+              paddingAngle={4}
               label={({ name, percent }) =>
                 `${name} (${(percent * 100).toFixed(0)}%)`
               }
@@ -67,72 +57,132 @@ export function CustomerSegmentChart({ data }: CustomerSegmentChartProps) {
               {data.map((_, index) => (
                 <Cell
                   key={`cell-${index}`}
-                  fill={chartColors[index % chartColors.length]}
+                  fill={
+                    CHART_COLORS[
+                      Object.keys(CHART_COLORS)[
+                        index % Object.keys(CHART_COLORS).length
+                      ] as keyof typeof CHART_COLORS
+                    ]
+                  }
                 />
               ))}
             </Pie>
             <Tooltip
               content={
                 <ChartTooltipContent
-                  formatter={(value, name) => [formatNrs(Number(value)), name]}
+                  formatter={(value, name) => [
+                    formatCurrency(Number(value)),
+                    name,
+                  ]}
                 />
               }
             />
-            <Legend />
+            <Legend verticalAlign="bottom" height={36} />
           </PieChart>
         </ResponsiveContainer>
       </ChartContainer>
 
-      {/* Bar Chart */}
       <ChartContainer
         config={{
-          revenue: { label: "Revenue", color: chartColors[0] },
-          profit: { label: "Profit", color: chartColors[1] },
+          revenue: { label: "Revenue", color: CHART_COLORS.primary },
+          profit: { label: "Profit", color: CHART_COLORS.secondary },
         }}
-        className="h-[250px]"
+        className="h-[300px] p-4"
       >
-        <ResponsiveContainer width="100%" height="100%">
+        <ResponsiveContainer {...chartConfig.responsiveContainer}>
           <BarChart
             data={data}
-            margin={{ top: 10, right: 10, left: 10, bottom: 20 }}
+            margin={{ top: 20, right: 30, left: 20, bottom: 20 }}
           >
-            <CartesianGrid
-              strokeDasharray="3 3"
-              vertical={false}
-              className="stroke-muted"
-            />
+            <CartesianGrid strokeDasharray="3 3" className="stroke-muted/20" />
             <XAxis
               dataKey="segment"
-              tick={{ fontSize: 12 }}
+              tick={{ fill: "#9CA3AF", fontSize: 12 }}
               tickLine={false}
-              axisLine={false}
+              axisLine={{ stroke: "#374151" }}
             />
             <YAxis
               tickFormatter={(value) => `Nrs ${value / 100000}L`}
-              tick={{ fontSize: 12 }}
+              tick={{ fill: "#9CA3AF", fontSize: 12 }}
               tickLine={false}
-              axisLine={false}
+              axisLine={{ stroke: "#374151" }}
             />
             <Tooltip
               content={
                 <ChartTooltipContent
-                  formatter={(value, name) => [formatNrs(Number(value)), name]}
+                  formatter={(value, name) => [
+                    formatCurrency(Number(value)),
+                    name,
+                  ]}
                 />
               }
             />
             <Legend />
-            <Bar
-              dataKey="revenue"
-              fill={chartColors[0]}
-              radius={[4, 4, 0, 0]}
-              barSize={30}
-            />
-            <Bar
-              dataKey="profit"
-              fill={chartColors[1]}
-              radius={[4, 4, 0, 0]}
-              barSize={30}
-            />
+            <Bar dataKey="revenue" radius={[6, 6, 0, 0]} barSize={32}>
+              {data.map((_, index) => (
+                <Cell
+                  key={`cell-${index}`}
+                  fill={`url(#gradientRevenue-${index})`}
+                />
+              ))}
+            </Bar>
+            <Bar dataKey="profit" radius={[6, 6, 0, 0]} barSize={32}>
+              {data.map((_, index) => (
+                <Cell
+                  key={`cell-${index}`}
+                  fill={`url(#gradientProfit-${index})`}
+                />
+              ))}
+            </Bar>
+            {/* Gradient Definitions */}
+            <defs>
+              {data.map((_, index) => (
+                <linearGradient
+                  key={`gradientRevenue-${index}`}
+                  id={`gradientRevenue-${index}`}
+                  x1="0"
+                  y1="0"
+                  x2="0"
+                  y2="1"
+                >
+                  <stop
+                    offset="0%"
+                    stopColor={
+                      CHART_GRADIENTS[index % CHART_GRADIENTS.length][0]
+                    }
+                  />
+                  <stop
+                    offset="100%"
+                    stopColor={
+                      CHART_GRADIENTS[index % CHART_GRADIENTS.length][1]
+                    }
+                  />
+                </linearGradient>
+              ))}
+              {data.map((_, index) => (
+                <linearGradient
+                  key={`gradientProfit-${index}`}
+                  id={`gradientProfit-${index}`}
+                  x1="0"
+                  y1="0"
+                  x2="0"
+                  y2="1"
+                >
+                  <stop
+                    offset="0%"
+                    stopColor={
+                      CHART_GRADIENTS[(index + 2) % CHART_GRADIENTS.length][0]
+                    }
+                  />
+                  <stop
+                    offset="100%"
+                    stopColor={
+                      CHART_GRADIENTS[(index + 2) % CHART_GRADIENTS.length][1]
+                    }
+                  />
+                </linearGradient>
+              ))}
+            </defs>
           </BarChart>
         </ResponsiveContainer>
       </ChartContainer>

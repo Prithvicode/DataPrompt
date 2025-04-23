@@ -48,10 +48,15 @@ class ChatRequest(BaseModel):
     job_id: Optional[str] = None
 
 
+import math
+import numpy as np
+import pandas as pd
+import json
+
 def make_json_safe(data):
     """
-    Recursively convert all NumPy and pandas types to Python native types
-    to ensure JSON serialization works correctly.
+    Recursively convert all NumPy and pandas types to Python native types,
+    and sanitize non-JSON-compliant float values (NaN, inf).
     """
     if data is None:
         return None
@@ -61,7 +66,10 @@ def make_json_safe(data):
         return [make_json_safe(item) for item in data]
     elif isinstance(data, (np.integer, np.int64, np.int32, np.int16, np.int8)):
         return int(data)
-    elif isinstance(data, (np.floating, np.float64, np.float32, np.float16)):
+    elif isinstance(data, (np.floating, float, np.float64, np.float32, np.float16)):
+        # Catch NaN, inf, -inf
+        if math.isnan(data) or math.isinf(data):
+            return None
         return float(data)
     elif isinstance(data, (np.ndarray,)):
         return make_json_safe(data.tolist())
@@ -74,13 +82,12 @@ def make_json_safe(data):
     elif isinstance(data, np.bool_):
         return bool(data)
     elif hasattr(data, 'to_json'):
-        # Handle objects with to_json method
         return json.loads(data.to_json())
     elif hasattr(data, '__dict__'):
-        # Handle custom objects by converting to dict
         return make_json_safe(vars(data))
     else:
         return data
+
 @app.post("/upload")
 async def upload_file(file: UploadFile = File(...)):
     """

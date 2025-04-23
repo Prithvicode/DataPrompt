@@ -7,11 +7,20 @@ import ChatInput from "./chat/ChatInput";
 import DataTable from "./chat/DataTable";
 import DataSummary from "./chat/DataSummary";
 import ForecastResults from "./chat/ForecastResults";
-
 import AggregationResults from "./chat/AggregationResults";
 import DatasetSelector from "./chat/DatasetSelector";
 import type { Message, DatasetInfo, AnalysisResult } from "./chat/types";
 import { cn } from "@/lib/utils";
+import { fetchDatasets as fetchDatasetsAPI } from "@/services/query";
+
+// Import UI components
+import { Header } from "./Header";
+import { IconHeader } from "./IconHeader";
+import { ActionButton } from "./ActionButton";
+import { EmptyState } from "./EmptyState";
+
+import { Sidebar } from "./Sidebar";
+import { SuggestionGrid } from "./SuggestionGrid";
 
 export default function ChatComponent() {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -28,7 +37,7 @@ export default function ChatComponent() {
 
   useEffect(() => {
     document.body.style.overflow = "hidden";
-    fetchDatasets();
+    fetchDatasetsData();
     return () => {
       document.body.style.overflow = "auto";
     };
@@ -42,12 +51,11 @@ export default function ChatComponent() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
 
-  const fetchDatasets = async () => {
+  const fetchDatasetsData = async () => {
     try {
-      const response = await fetch("http://localhost:8000/datasets");
-      if (response.ok) {
-        const data = await response.json();
-        setDatasets(data.datasets || []);
+      const response = await fetchDatasetsAPI();
+      if (response && response.datasets) {
+        setDatasets(response.datasets);
       }
     } catch (error) {
       console.error("Error fetching datasets:", error);
@@ -83,7 +91,7 @@ export default function ChatComponent() {
       ]);
 
       // Refresh the datasets list
-      fetchDatasets();
+      fetchDatasetsData();
       return data.id;
     } catch (error) {
       console.error("Error uploading file:", error);
@@ -317,8 +325,15 @@ export default function ChatComponent() {
   const hasData = !!analysisResult;
   const hasMessages = messages.length > 0;
 
+  const examplePrompts = [
+    "Analyze trends in this dataset",
+    "Summarize key insights",
+    "Create a 3-month forecast",
+    "Find outliers in this data",
+  ];
+
   return (
-    <div className="flex h-screen text-gray-100 overflow-hidden w-full custom-scrollbar">
+    <div className="flex h-screen text-gray-100 bg-gray-950 overflow-hidden w-full custom-scrollbar ">
       {/* Main Chat Area */}
       <div
         className={cn(
@@ -327,65 +342,55 @@ export default function ChatComponent() {
         )}
       >
         {/* Chat Header */}
-        <div className="border-b border-gray-800 py-3 bg-gray-950 px-4 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Sparkles className="h-5 w-5 text-blue-400" />
-            <h1 className="text-xl font-semibold">DataPrompt</h1>
-          </div>
-
-          {datasets.length > 0 && (
-            <div className="flex items-center">
-              <Database className="h-4 w-4 text-blue-400 mr-2" />
-              <DatasetSelector
-                datasets={datasets}
-                activeDatasetId={activeDatasetId}
-                onSelect={handleDatasetSelect}
-              />
-            </div>
-          )}
-        </div>
+        <Header
+          leftContent={
+            <IconHeader
+              icon={Sparkles}
+              text="DataPrompt"
+              iconColor="text-blue-400"
+            />
+          }
+          rightContent={
+            datasets.length > 0 && (
+              <div className="flex items-center">
+                <Database className="h-4 w-4 text-blue-400 mr-2" />
+                <DatasetSelector
+                  datasets={datasets}
+                  activeDatasetId={activeDatasetId}
+                  onSelect={handleDatasetSelect}
+                />
+              </div>
+            )
+          }
+        />
 
         {/* Conditional Layout based on whether there are messages */}
         {!hasMessages ? (
           // Empty state with centered input
-          <div className="flex flex-col flex-1 items-center justify-center px-4 bg-gray-950">
-            <div className="w-full max-w-md space-y-8">
-              <div className="text-center space-y-4">
-                <Sparkles className="h-12 w-12 text-blue-400 mx-auto opacity-80" />
-                <h2 className="text-2xl font-semibold">Chat with DataPrompt</h2>
-                <p className="text-gray-400 mb-8">
-                  Upload your data and ask questions to get insights,
-                  visualizations, and forecasts.
-                </p>
-              </div>
-
-              {/* Centered chat input */}
-              <ChatInput
-                onSend={processData}
-                loading={loading}
-                file={file}
-                onFileChange={setFile}
-              />
-
-              {/* Example prompts */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-8">
-                {[
-                  "Analyze trends in this dataset",
-                  "Summarize key insights",
-                  "Create a 3-month forecast",
-                  "Find outliers in this data",
-                ].map((suggestion, i) => (
-                  <button
-                    key={i}
-                    onClick={() => processData(suggestion, file)}
-                    className="text-left p-3 rounded-lg border border-gray-800 hover:border-blue-500 hover:bg-gray-900 transition-all"
-                  >
-                    {suggestion}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
+          <EmptyState
+            icon={Sparkles}
+            title="Chat with DataPrompt"
+            description="Upload your data and ask questions to get insights, visualizations, and forecasts."
+            iconColor="text-blue-400"
+            className="flex-1 bg-gray-950"
+            action={
+              <>
+                <ChatInput
+                  onSend={processData}
+                  loading={loading}
+                  file={file}
+                  onFileChange={setFile}
+                />
+                <SuggestionGrid
+                  suggestions={examplePrompts}
+                  onSelect={(suggestion: string) =>
+                    processData(suggestion, file)
+                  }
+                  className="mt-8"
+                />
+              </>
+            }
+          />
         ) : (
           // Regular chat layout with messages and input at bottom
           <>
@@ -413,46 +418,23 @@ export default function ChatComponent() {
       </div>
 
       {/* Data Visualization Sidebar */}
-      <div
-        className={cn(
-          "fixed top-0 right-0 h-full w-full sm:w-[500px] md:w-[600px] lg:w-[700px] xl:w-[800px] 2xl:w-[900px] bg-gray-900 border-l border-gray-800 shadow-lg transition-all duration-300 ease-in-out transform z-50",
-          showSidebar && hasData ? "translate-x-0" : "translate-x-full"
-        )}
-      >
-        <div className="h-full flex flex-col">
-          {/* Header */}
-          <div className="border-b border-gray-800 p-4 flex justify-between items-center bg-gray-900">
-            <div className="flex items-center gap-2">
-              <BarChart className="h-5 w-5 text-blue-400" />
-              <h2 className="font-semibold text-white text-lg">
-                Data Analysis
-              </h2>
-            </div>
-            <button
-              onClick={() => setShowSidebar(false)}
-              className="p-2 rounded-md hover:bg-gray-800 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500"
-              aria-label="Close sidebar"
-            >
-              <X className="h-5 w-5 text-gray-300" />
-            </button>
-          </div>
 
-          {/* Scrollable content */}
-          <div className="flex-1 overflow-y-auto p-6 custom-scrollbar bg-gray-900">
-            <DataView />
-          </div>
-        </div>
-      </div>
+      <Sidebar
+        isOpen={showSidebar && hasData}
+        onClose={() => setShowSidebar(false)}
+        header={<IconHeader icon={BarChart} text="Data Analysis" />}
+      >
+        <DataView />
+      </Sidebar>
 
       {/* Toggle Sidebar Button */}
       {!showSidebar && hasData && (
-        <button
+        <ActionButton
+          icon={BarChart}
           onClick={() => setShowSidebar(true)}
-          className="fixed bottom-24 right-4 bg-blue-600 text-white p-3 rounded-full shadow-lg hover:shadow-xl transition-all"
-          aria-label="Show data analysis"
-        >
-          <BarChart className="h-5 w-5" />
-        </button>
+          className="fixed bottom-24 right-4"
+          label="Show data analysis"
+        />
       )}
     </div>
   );

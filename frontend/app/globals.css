@@ -121,6 +121,10 @@
   }
 }
 
+body {
+  font-family: var(--font-sans), sans-serif;
+}
+
 /* Typing indicator animation */
 .typing-indicator {
   display: inline-flex;
