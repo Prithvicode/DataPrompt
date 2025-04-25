@@ -21,8 +21,8 @@ export default function MessageList({
       content.includes("Error:")
     ) {
       return (
-        <div className="bg-red-900/20 border border-red-800/50 rounded-md p-3 text-red-200">
-          <div className="font-medium text-red-300 mb-1">Error</div>
+        <div className="bg-red-100 border border-red-300 rounded-md p-3 text-red-700">
+          <div className="font-medium text-red-700 mb-1">Error</div>
           {content}
         </div>
       );
@@ -52,8 +52,8 @@ export default function MessageList({
               className={cn(
                 "flex-shrink-0 rounded-full w-8 h-8 flex items-center justify-center",
                 isAssistant
-                  ? "bg-blue-900/30 text-blue-400"
-                  : "bg-gray-800 text-gray-300"
+                  ? "bg-blue-200 text-blue-600"
+                  : "bg-gray-300 text-gray-700"
               )}
             >
               {isAssistant ? (
@@ -92,15 +92,15 @@ export default function MessageList({
                 className={cn(
                   "rounded-lg p-3",
                   isUser
-                    ? "bg-blue-950 text-white ml-auto"
-                    : "text-gray-200 mr-auto"
+                    ? "bg-blue-100 ml-auto text-blue-800"
+                    : "bg-gray-200 mr-auto text-gray-800"
                 )}
               >
                 {showStreamingContent ? (
                   <div className="flex flex-col gap-1">
                     <span>{streamContent}</span>
                     <div className="flex justify-end items-center gap-2">
-                      <span className="text-sm text-gray-400">Thinking</span>
+                      <span className="text-sm text-gray-600">Thinking</span>
                       <span className="h-2 w-2 rounded-full bg-gray-400 animate-ping" />
                     </div>
                   </div>

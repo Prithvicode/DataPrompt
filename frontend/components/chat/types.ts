@@ -34,6 +34,7 @@ export interface AnalysisResult {
     yLabel: string;
   };
   mae?: number;
+  note?: string;
   r2?: number;
   metrics?: {
     mse?: number;

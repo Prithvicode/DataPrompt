@@ -1,4 +1,3 @@
-// components/ui/SuggestionGrid.tsx
 "use client";
 
 import { cn } from "@/lib/utils";
@@ -25,16 +24,16 @@ export function SuggestionGrid({
   };
 
   return (
-    <div className={cn("grid gap-2", gridColumns[columns], className)}>
+    <div className={cn("grid gap-4", gridColumns[columns], className)}>
       {suggestions.map((suggestion, i) => (
         <Card
           key={i}
           clickable
           hoverable
           onClick={() => onSelect(suggestion)}
-          className="text-left"
+          className="shadow-sm hover:shadow-lg text-left border border-gray-200 rounded-lg transition-all duration-300 ease-in-out hover:bg-gray-50"
         >
-          {suggestion}
+          <p className="text-gray-800 p-3">{suggestion}</p>
         </Card>
       ))}
     </div>

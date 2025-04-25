@@ -26,7 +26,7 @@ export function Card({
       className={cn(
         "p-3 rounded-lg",
         bordered && "border border-gray-800",
-        hoverable && "hover:border-blue-500 hover:bg-gray-900 transition-all",
+        hoverable && "hover:border-blue-500 hover:bg-gray-100 transition-all",
         clickable && "cursor-pointer",
         className
       )}

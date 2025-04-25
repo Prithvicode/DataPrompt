@@ -50,7 +50,7 @@ export default function ChatInput({
   return (
     <form
       onSubmit={handleSubmit}
-      className="relative mx-auto max-w-3xl max-h-[400px] border border-accent-foreground rounded-md p-2"
+      className="relative mx-auto max-w-3xl max-h-[400px] bg-white border border-gray-300 shadow-md rounded-md p-4"
     >
       {file && (
         <div className="mb-2">
@@ -71,7 +71,7 @@ export default function ChatInput({
           onChange={(e) => setMessage(e.target.value)}
           onKeyDown={handleKeyDown}
           placeholder={file ? "Add a message..." : "Ask about your data..."}
-          className="min-h-[56px]  max-h-[200px] custom-scrollbar w-full resize-none py-3 pr-24 bg-gray-800 border-gray-700 focus-visible:ring-blue-500 text-white placeholder:text-gray-400"
+          className="min-h-[56px] max-h-[200px] custom-scrollbar w-full resize-none py-3 pr-24 bg-gray-50 text-gray-900 border border-gray-300 rounded-md placeholder:text-gray-500 focus:outline-none  focus-visible:ring-blue-300 "
           rows={1}
           disabled={loading}
         />
@@ -81,7 +81,7 @@ export default function ChatInput({
             type="button"
             size="icon"
             variant="ghost"
-            className="h-8 w-8 rounded-full text-gray-400 hover:text-white hover:bg-gray-700"
+            className="h-8 w-8 rounded-full text-gray-500 hover:bg-gray-200"
             onClick={() => fileInputRef.current?.click()}
             title="Attach file"
           >
@@ -91,7 +91,7 @@ export default function ChatInput({
           <Button
             type="submit"
             size="icon"
-            className="h-8 w-8 rounded-full bg-blue-600 hover:bg-blue-700 text-white disabled:bg-gray-700 disabled:text-gray-400"
+            className="h-8 w-8 rounded-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-200 disabled:text-gray-400"
             disabled={loading || (!message.trim() && !file)}
           >
             {loading ? (

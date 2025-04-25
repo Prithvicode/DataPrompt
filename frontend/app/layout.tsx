@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono, Inter } from "next/font/google";
 import "./globals.css";
 import QueryProvider from "@/providers/QueryProvider";
+import { ThemeProvider } from "next-themes";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -29,9 +30,9 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
+    <html lang="en light">
       <body
-        className={`${inter.variable} antialiased custom-scrollbar bg-gray-950`}
+        className={`${inter.variable} antialiased custom-scrollbar bg-primary`}
         suppressHydrationWarning={true}
       >
         <QueryProvider>{children}</QueryProvider>
