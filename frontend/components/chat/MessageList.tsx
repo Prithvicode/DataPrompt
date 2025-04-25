@@ -16,18 +16,11 @@ export default function MessageList({
   streamContent,
 }: MessageListProps) {
   const formatErrorMessage = (content: string) => {
-    if (
-      content.startsWith("Please upload a file") ||
-      content.includes("Error:")
-    ) {
-      return (
-        <div className="bg-red-100 border border-red-300 rounded-md p-3 text-red-700">
-          <div className="font-medium text-red-700 mb-1">Error</div>
-          {content}
-        </div>
-      );
-    }
-    return content;
+    return (
+      <div className=" rounded-md p-3 text-red-700 whitespace-pre-wrap">
+        {content}
+      </div>
+    );
   };
 
   return (
@@ -93,6 +86,8 @@ export default function MessageList({
                   "rounded-lg p-3",
                   isUser
                     ? "bg-blue-100 ml-auto text-blue-800"
+                    : message.error
+                    ? "bg-red-100 border border-red-500"
                     : "bg-gray-200 mr-auto text-gray-800"
                 )}
               >
@@ -104,11 +99,17 @@ export default function MessageList({
                       <span className="h-2 w-2 rounded-full bg-gray-400 animate-ping" />
                     </div>
                   </div>
-                ) : typeof message.content === "string" &&
-                  message.content.includes("Error") ? (
-                  formatErrorMessage(message.content)
+                ) : typeof message.content === "string" ? (
+                  // Use the error property to determine if it should be formatted as an error
+                  message.error ? (
+                    formatErrorMessage(message.content)
+                  ) : (
+                    <span className="whitespace-pre-wrap">
+                      {message.content}
+                    </span>
+                  )
                 ) : (
-                  message.content
+                  <span>{message.content}</span>
                 )}
               </div>
 

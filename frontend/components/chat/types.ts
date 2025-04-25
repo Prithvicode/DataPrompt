@@ -1,6 +1,7 @@
 export interface Message {
   role: "user" | "assistant";
   content: string;
+  error?: boolean;
   timestamp: Date;
   file?: {
     name: string;

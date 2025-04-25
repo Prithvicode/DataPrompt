@@ -36,6 +36,7 @@ export default function ChatComponent() {
   const [datasets, setDatasets] = useState<DatasetInfo[]>([]);
   const [activeDatasetId, setActiveDatasetId] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [error, setError] = useState<string | undefined>(undefined);
 
   useEffect(() => {
     document.body.style.overflow = "hidden";
@@ -61,6 +62,15 @@ export default function ChatComponent() {
       }
     } catch (error) {
       console.error("Error fetching datasets:", error);
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          content: "Failed to fetch datasets from the server.",
+          timestamp: new Date(),
+          error: true,
+        },
+      ]);
     }
   };
 
@@ -103,8 +113,10 @@ export default function ChatComponent() {
             error instanceof Error ? error.message : "Unknown error"
           }`,
           timestamp: new Date(),
+          error: true,
         },
       ]);
+
       return null;
     } finally {
       setLoading(false);
@@ -181,9 +193,24 @@ export default function ChatComponent() {
       if (!analysisResponse.ok)
         throw new Error(`Analysis failed: ${analysisResponse.statusText}`);
       const analysisData = await analysisResponse.json();
+      console.log("Analysis response:", analysisData);
+
+      // Check if result exists and doesn't contain an error or a message (which could be an error)
       if (analysisData.result) {
-        setAnalysisResult(analysisData.result);
-        setShowSidebar(true);
+        // Don't show sidebar for error intents or when there's an error message
+        const isErrorResult =
+          analysisData.result.error ||
+          (analysisData.result.message && !analysisData.result.type);
+
+        if (!isErrorResult) {
+          setAnalysisResult(analysisData.result);
+          setShowSidebar(true);
+        } else {
+          // Still set the result for error display in chat
+          setAnalysisResult(analysisData.result);
+          // But don't show sidebar
+          setShowSidebar(false);
+        }
       }
 
       const chatResponse = await fetch("http://localhost:8000/chat", {
@@ -196,12 +223,15 @@ export default function ChatComponent() {
         }),
       });
 
+      console.log("Chat response:", chatResponse.body);
       if (!chatResponse.ok)
         throw new Error(`Chat failed: ${chatResponse.statusText}`);
       const reader = chatResponse.body?.getReader();
       if (!reader) throw new Error("No reader");
 
       let fullContent = "";
+      let isError = false;
+
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -209,27 +239,37 @@ export default function ChatComponent() {
 
         for (const line of lines) {
           if (line.startsWith("data: ")) {
-            const data = line.slice(6);
+            const data = line.slice(6).trim();
             if (data === "[DONE]") {
+              // Final update to set the completed assistant message
               setMessages((prev) => {
                 const updated = [...prev];
-                updated[updated.length - 1] = {
-                  role: "assistant",
-                  content: fullContent,
-                  timestamp: new Date(),
-                };
+                const lastMessage = updated[updated.length - 1];
+                if (lastMessage?.role === "assistant") {
+                  updated[updated.length - 1] = {
+                    ...lastMessage,
+                    content: fullContent,
+                    timestamp: new Date(),
+                    error: isError, // Set the error flag from streamed responses
+                  };
+                }
                 return updated;
               });
-            } else {
-              try {
-                const parsed = JSON.parse(data);
-                if (parsed.content) {
-                  fullContent += parsed.content;
-                  setStreamContent(fullContent);
-                }
-              } catch (e) {
-                console.error("Parsing error:", e);
+              break;
+            }
+
+            try {
+              const parsed = JSON.parse(data);
+              if (parsed.content) {
+                fullContent += parsed.content;
+                setStreamContent(fullContent);
               }
+              // Track if any part of the message was flagged as an error
+              if (parsed.error) {
+                isError = true;
+              }
+            } catch (err) {
+              console.error("JSON parsing error in streamed chunk:", err, line);
             }
           }
         }
@@ -242,6 +282,7 @@ export default function ChatComponent() {
           role: "assistant",
           content: errorMessage,
           timestamp: new Date(),
+          error: true, // Mark as error
         };
         return updated;
       });
@@ -250,7 +291,6 @@ export default function ChatComponent() {
       setStreamContent("");
     }
   };
-
   const handleDatasetSelect = (datasetId: string) => {
     setActiveDatasetId(datasetId);
     const dataset = datasets.find((d) => d.id === datasetId);
