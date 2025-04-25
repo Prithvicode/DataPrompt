@@ -551,79 +551,51 @@ class DataAnalyzer:
                 }
             }
 
-    def execute_query(self, query: str, chat_history: List[Dict[str, str]] = None) -> Dict[str, Any]:
+
+
+    def execute_query(self, prompt: str, df_columns: List[str]):
         """
-        Execute a custom query using LLM to generate pandas code.
+        Execute a custom query using LLM to generate pandas code, returning
+        either a scalar or a DataFrame.
         """
+        code = generate_panda_code_from_prompt(prompt, df_columns)
+        print("Generated code from LLM:", code)
+
         try:
-            print(f"[DEBUG] Executing query: {query}")
-            # Step 1: Prepare metadata
-            column_info = self.get_column_metadata()
-            system_prompt = "You are a pandas expert. Given a user query and dataframe columns, return pandas code to fulfill the query."
+            print(f"[DEBUG] Aggregating data with prompt: {prompt}")
+            local_vars = {'df': self.df.copy()}
 
-            user_prompt = f"""
-    The user asked: "{query}"
-    Here are the columns in the dataset:
-    {column_info}
-
-    Write only the pandas code to answer the question. Do not explain. Assume the DataFrame is called df.
-    """
-
-            print("[DEBUG] Sending request to Ollama for pandas code generation")
-            llama_payload = {
-                "model": MODEL_NAME,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ]
-            }
-
-            # Step 2: Ask LLaMA for pandas code
-            response = requests.post(OLLAMA_URL, json=llama_payload)
-            print(f"[DEBUG] Response : {response}")
-            response.raise_for_status()
-            code_block = response.json().get("message", {}).get("content", "").strip()
-            print(f"[DEBUG] Received code from Ollama: {code_block[:100]}...")
-
-            # Extract code from triple-backtick block if needed
-            match = re.search(r"```(?:python)?\s*(.*?)```", code_block, re.DOTALL)
-            code_str = match.group(1) if match else code_block
-            print(f"[DEBUG] Extracted code: {code_str[:100]}...")
-
-            # Step 3: Execute the code
-            local_vars = {"df": self.df.copy()}
-            print("[DEBUG] Executing generated pandas code")
-            exec(code_str, {}, local_vars)
-
-            # Try to extract the resulting variable (assuming last line is a result)
-            result_var = list(local_vars.values())[-1]
-            print(f"[DEBUG] Code execution complete, result type: {type(result_var)}")
-            
-            if isinstance(result_var, pd.DataFrame):
-                data = result_var.head(100).to_dict(orient='records')
-                print(f"[DEBUG] Result is DataFrame with {len(result_var)} rows")
-            elif isinstance(result_var, (pd.Series, list)):
-                data = str(result_var)
-                print(f"[DEBUG] Result is Series or list with length {len(result_var)}")
+            # Only wrap if the model didn't already assign to `result`
+            if not re.search(r'^\s*result\s*=', code):
+                exec_code = f"result = {code}"
             else:
-                data = str(result_var)
-                print(f"[DEBUG] Result is {type(result_var)}")
+                exec_code = code
 
+            print(f"[DEBUG] Executing code:\n{exec_code}")
+            exec(exec_code, {}, local_vars)
+
+            # Grab the result
+            result = local_vars.get('result')
+
+            # If still None, fall back to df
+            if result is None:
+                result = local_vars['df']
+
+            print(f"[DEBUG] Aggregation result: {result!r}")
             return {
-                "type": "query",
-                "query": query,
-                "pandas_code": code_str,
-                "data": data
+                'type' : 'query',
+                'data' : result,
+                'note' : {prompt}
             }
 
         except Exception as e:
-            print(f"[ERROR] Error executing query: {str(e)}")
-            print(f"[ERROR] Traceback: {traceback.format_exc()}")
+            print(f"[ERROR] Error aggregating data: {str(e)}")
+            print(traceback.format_exc())
             return {
                 "type": "error",
-                "message": f"Error executing query: {str(e)}"
+                "message": f"Error aggregating data: {str(e)}"
             }
-    
+
     def analyze_trend(self, prompt: str, **parameters) -> Dict[str, Any]:
         """
         Analyze trends in time series data.
@@ -776,134 +748,47 @@ class DataAnalyzer:
                 "message": f"Error analyzing trend: {str(e)}"
             }
     
-    def aggregate(self, prompt: str, **parameters) -> Dict[str, Any]:
+    def aggregate(self, prompt: str, df_columns: List[str]):
         """
         Aggregate data based on one or more dimensions.
         """
+        code = generate_panda_code_from_prompt(prompt, df_columns)
+        print("Generated code from LLM:", code)
+
         try:
             print(f"[DEBUG] Aggregating data with prompt: {prompt}")
-            
-            # Step 1: Identify the group by columns and aggregation column
-            group_by_cols = []
-            agg_col = None
-            agg_func = "sum"  # Default aggregation function
-            
-            # Look for aggregation keywords in the prompt
-            agg_keywords = {
-                "sum": ["sum", "total"],
-                "avg": ["average", "avg", "mean"],
-                "count": ["count", "number"],
-                "min": ["min", "minimum", "lowest"],
-                "max": ["max", "maximum", "highest"]
-            }
-            
-            # Determine aggregation function from prompt
-            for func, keywords in agg_keywords.items():
-                if any(keyword in prompt.lower() for keyword in keywords):
-                    agg_func = func
-                    print(f"[DEBUG] Found aggregation function: {agg_func}")
-                    break
-            
-            # Look for "by" or "group by" in the prompt to identify group by columns
-            by_match = re.search(r"(?:group\s+by|by)\s+([a-zA-Z0-9, ]+)", prompt.lower())
-            if by_match:
-                # Split the matched group by commas or "and"
-                group_by_text = by_match.group(1)
-                group_by_candidates = re.split(r",|\sand\s", group_by_text)
-                
-                # Clean up the candidates and match to actual columns
-                for candidate in group_by_candidates:
-                    candidate = candidate.strip()
-                    print(f"[DEBUG] Group by candidate: {candidate}")
-                    
-                    # Try to match the candidate to a column name
-                    for col in self.df.columns:
-                        if candidate.lower() in col.lower() or col.lower() in candidate.lower():
-                            group_by_cols.append(col)
-                            print(f"[DEBUG] Matched group by column: {col}")
-                            break
-            
-            # If no group by columns found, look for categorical columns mentioned in the prompt
-            if not group_by_cols:
-                for col in self.categorical_columns:
-                    if col.lower() in prompt.lower():
-                        group_by_cols.append(col)
-                        print(f"[DEBUG] Found categorical column in prompt: {col}")
-            
-            # Look for aggregation column in the prompt
-            agg_value_keywords = ["revenue", "sales", "profit", "amount", "value", "price", "cost", "units"]
-            for keyword in agg_value_keywords:
-                if keyword in prompt.lower():
-                    # Find a column that matches this keyword
-                    for col in self.numeric_columns:
-                        if keyword in col.lower():
-                            agg_col = col
-                            print(f"[DEBUG] Found aggregation column from keyword: {agg_col}")
-                            break
-                    if agg_col:
-                        break
-            
-            # If no aggregation column found, use the first numeric column
-            if not agg_col and self.numeric_columns:
-                agg_col = self.numeric_columns[0]
-                print(f"[DEBUG] Using default aggregation column: {agg_col}")
-            
-            # If still no group by columns, use the first categorical column
-            if not group_by_cols and self.categorical_columns:
-                group_by_cols.append(self.categorical_columns[0])
-                print(f"[DEBUG] Using default group by column: {group_by_cols[0]}")
-            
-            if not group_by_cols or not agg_col:
-                print("[ERROR] Could not identify group by columns or aggregation column")
+            local_vars = {'df': self.df.copy()}
+
+                # Only wrap if the model didn't already assign to `result`
+            if not re.search(r'^\s*result\s*=', code):
+                exec_code = f"result = {code}"
+            else:
+                exec_code = code
+
+            print(f"[DEBUG] Executing code:\n{exec_code}")
+            exec(exec_code, {}, local_vars)
+
+                # Grab the result
+            result = local_vars.get('result')
+
+                # If still None, fall back to df
+            if result is None:
+                 result = local_vars['df']
+
+            print(f"[DEBUG] Aggregation result: {result!r}")
+            return {
+                    'type' : 'query',
+                    'data' : result,
+                    'note': {prompt}
+                }
+
+        except Exception as e:
+                print(f"[ERROR] Error aggregating data: {str(e)}")
+                print(traceback.format_exc())
                 return {
                     "type": "error",
-                    "message": "Could not identify group by columns or aggregation column for aggregation."
+                    "message": f"Error aggregating data: {str(e)}"
                 }
-            
-            # Step 2: Perform the aggregation
-            print(f"[DEBUG] Aggregating {agg_col} by {group_by_cols} using {agg_func}")
-            
-            # Group by the columns and calculate the aggregation
-            grouped = self.df.groupby(group_by_cols)
-            
-            # Apply the aggregation function
-            if agg_func == "sum":
-                agg_data = grouped[agg_col].sum().reset_index()
-            elif agg_func == "avg":
-                agg_data = grouped[agg_col].mean().reset_index()
-            elif agg_func == "count":
-                agg_data = grouped[agg_col].count().reset_index()
-            elif agg_func == "min":
-                agg_data = grouped[agg_col].min().reset_index()
-            elif agg_func == "max":
-                agg_data = grouped[agg_col].max().reset_index()
-            else:
-                agg_data = grouped[agg_col].sum().reset_index()
-            
-            print(f"[DEBUG] Aggregation complete, result shape: {agg_data.shape}")
-            
-            # Sort by the aggregated value in descending order
-            agg_data = agg_data.sort_values(by=agg_col, ascending=False)
-            
-            # Prepare the result
-            result_data = agg_data.to_dict(orient='records')
-            print(f"[DEBUG] Prepared {len(result_data)} records for aggregation result")
-            
-            return {
-                "type": "aggregation",
-                "group_by_columns": group_by_cols,
-                "agg_column": agg_col,
-                "agg_function": agg_func,
-                "data": result_data
-            }
-            
-        except Exception as e:
-            print(f"[ERROR] Error aggregating data: {str(e)}")
-            print(f"[ERROR] Traceback: {traceback.format_exc()}")
-            return {
-                "type": "error",
-                "message": f"Error aggregating data: {str(e)}"
-            }
     
     def forecast(self, prompt: str, **parameters):
         """

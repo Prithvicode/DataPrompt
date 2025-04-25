@@ -12,14 +12,23 @@ def classify_intent(prompt: str, chat_history: List[Dict[str, str]] = None) -> D
     print(f"[DEBUG] Prompt from user: {prompt}")
 
     base_prompt = f"""
-You are an AI that classifies data analysis queries into one of these intents: summary, trend, aggregation, forecast, whatif, filter, query, predict.
-Respond with only one word representing the intent.
-Use "forecast" for future-oriented trends over time (e.g., next month's sales).
-Use "predict" for point or category-specific predictions (e.g., predict sales for product X).
-Do not include any other text.
+You are an AI that classifies data analysis questions into one of these intents:
+summary, trend, forecast, predict, whatif, filter, query.
+
+Respond with ONLY ONE WORD — the intent.
+
+Guidelines:
+- Use "summary" when the prompt asks for a general overview or description (e.g., "give me a summary", "describe the dataset"m "summarize").
+- Use "trend" for patterns or changes over time without future prediction (e.g., "how have sales changed over time").
+- Use "forecast" for future-oriented time-based predictions (e.g., "what will sales be next month").
+- Use "predict" for point or category-specific predictions (e.g., "predict sales for product X").
+- Use "whatif" for hypothetical or scenario-based analysis (e.g., "what if prices increase by 10%").
+- Use "filter" when the user wants to narrow or subset the data (e.g., "show me sales in California").
+- Use "query" for all other specific questions, including aggregations like maximum, minimum, sum, totals, averages, counts, group-bys, or column-level lookups (e.g., "total revenue", "average profit by category").
 
 Prompt: {prompt}
 """.strip()
+
 
     try:
         response = requests.post(
@@ -48,14 +57,16 @@ Prompt: {prompt}
         return {"intent": "summary", "parameters": {}}
     elif re.search(r'trend|over time|timeseries|time series', prompt, re.IGNORECASE):
         return {"intent": "trend", "parameters": {}}
-    elif re.search(r'group|aggregate|sum|average|mean|by', prompt, re.IGNORECASE):
-        return {"intent": "aggregation", "parameters": {}}
+    elif re.search(r'group|aggregate|sum|total|average|mean|by|per|count|max|min|distribution|breakdown', prompt, re.IGNORECASE):
+        return {"intent": "query", "parameters": {}}
     elif re.search(r'\bpredict\b|\bmodel\b|\bclassification\b|\bregression\b', prompt, re.IGNORECASE):
         return {"intent": "predict", "parameters": {}}
     elif re.search(r'forecast|future|next|upcoming', prompt, re.IGNORECASE):
         return {"intent": "forecast", "parameters": {}}
     elif re.search(r'filter|where|only|show', prompt, re.IGNORECASE):
         return {"intent": "filter", "parameters": {}}
+    elif re.search(r'what\s*if|simulate|scenario', prompt, re.IGNORECASE):
+        return {"intent": "whatif", "parameters": {}}
     else:
         return {"intent": "query", "parameters": {}}
 

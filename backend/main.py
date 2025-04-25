@@ -202,7 +202,7 @@ async def analyze_data(request: AnalyzeRequest, background_tasks: BackgroundTask
             result = analyzer.generate_summary()
 
         elif intent == "query":
-            result = analyzer.execute_query(request.prompt)
+            result = analyzer.execute_query(request.prompt, df.columns.tolist())
 
         elif intent == "trend":
             result = analyzer.analyze_trend(request.prompt, **parameters)
@@ -217,7 +217,7 @@ async def analyze_data(request: AnalyzeRequest, background_tasks: BackgroundTask
             result = analyzer.what_if_analysis(request.prompt, **parameters)
             
         elif intent == "aggregation":
-            result = analyzer.aggregate(request.prompt, **parameters)
+            result = analyzer.aggregate(request.prompt, df.columns.tolist())
 
         elif intent == "filter":
             # Pass the columns of the dataframe along with the prompt to filter_data

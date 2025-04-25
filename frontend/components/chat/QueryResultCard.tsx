@@ -11,7 +11,7 @@ interface QueryResultCardProps {
 const QueryResultCard: React.FC<QueryResultCardProps> = ({ value, note }) => {
   return (
     <Card className="relative overflow-hidden rounded-2xl border border-gray-300 shadow-lg bg-white hover:shadow-xl transition-shadow">
-      {/* Decorative gradient stripe */}
+      {/* Decorative gradient stripegit */}
       <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-400 via-blue-500 to-blue-600" />
 
       <CardHeader className="flex flex-row items-center justify-between pb-2">
