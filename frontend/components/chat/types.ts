@@ -1,6 +1,7 @@
 export interface Message {
   role: "user" | "assistant";
   content: string;
+  error?: boolean;
   timestamp: Date;
   file?: {
     name: string;
@@ -34,6 +35,7 @@ export interface AnalysisResult {
     yLabel: string;
   };
   mae?: number;
+  note?: string;
   r2?: number;
   metrics?: {
     mse?: number;

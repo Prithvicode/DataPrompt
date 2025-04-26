@@ -18,11 +18,11 @@ import { Header } from "./Header";
 import { IconHeader } from "./IconHeader";
 import { ActionButton } from "./ActionButton";
 import { EmptyState } from "./EmptyState";
-
 import { Sidebar } from "./Sidebar";
 import { SuggestionGrid } from "./SuggestionGrid";
 import PredictionResults from "./chat/PredictResults";
 import { Loader } from "./Loader";
+import QueryResultCard from "./chat/QueryResultCard";
 
 export default function ChatComponent() {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -36,6 +36,7 @@ export default function ChatComponent() {
   const [datasets, setDatasets] = useState<DatasetInfo[]>([]);
   const [activeDatasetId, setActiveDatasetId] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [error, setError] = useState<string | undefined>(undefined);
 
   useEffect(() => {
     document.body.style.overflow = "hidden";
@@ -61,6 +62,15 @@ export default function ChatComponent() {
       }
     } catch (error) {
       console.error("Error fetching datasets:", error);
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          content: "Failed to fetch datasets from the server.",
+          timestamp: new Date(),
+          error: true,
+        },
+      ]);
     }
   };
 
@@ -82,7 +92,6 @@ export default function ChatComponent() {
       const data = await response.json();
       setActiveDatasetId(data.id);
 
-      // Add a system message about the successful upload
       setMessages((prev) => [
         ...prev,
         {
@@ -92,7 +101,6 @@ export default function ChatComponent() {
         },
       ]);
 
-      // Refresh the datasets list
       fetchDatasetsData();
       return data.id;
     } catch (error) {
@@ -105,8 +113,10 @@ export default function ChatComponent() {
             error instanceof Error ? error.message : "Unknown error"
           }`,
           timestamp: new Date(),
+          error: true,
         },
       ]);
+
       return null;
     } finally {
       setLoading(false);
@@ -114,10 +124,8 @@ export default function ChatComponent() {
   };
 
   const processData = async (prompt: string, attachedFile: File | null) => {
-    // Allow sending a message with just a file (no text)
     if (!prompt.trim() && !attachedFile) return;
 
-    // Add user message with file attachment if present
     setMessages((prev) => [
       ...prev,
       {
@@ -136,18 +144,14 @@ export default function ChatComponent() {
 
     setLoading(true);
     setStreamContent("");
-
-    // Clear previous results
     setAnalysisResult(null);
 
-    // Handle file upload if a new file is attached
     let datasetId = activeDatasetId;
     if (attachedFile) {
       datasetId = await uploadFile(attachedFile);
-      setFile(null); // Clear the file input after upload
+      setFile(null);
     }
 
-    // If we don't have a dataset ID (either from previous uploads or a new upload), show an error
     if (!datasetId) {
       if (!attachedFile) {
         setMessages((prev) => [
@@ -162,32 +166,23 @@ export default function ChatComponent() {
         setLoading(false);
         return;
       }
-      // If we tried to upload a file but it failed, we've already shown an error message
       setLoading(false);
       return;
     }
 
-    // Prepare chat history for context
     const chatHistory = messages
-      .slice(-10) // Only use the last 10 messages for context
-      .map((msg) => ({
-        role: msg.role,
-        content: msg.content,
-      }));
+      .slice(-10)
+      .map((msg) => ({ role: msg.role, content: msg.content }));
 
-    // Temp assistant message placeholder
     setMessages((prev) => [
       ...prev,
       { role: "assistant", content: "", timestamp: new Date() },
     ]);
 
     try {
-      // First, try to get a structured analysis
       const analysisResponse = await fetch("http://localhost:8000/analyze", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           prompt,
           dataset_id: datasetId,
@@ -195,25 +190,32 @@ export default function ChatComponent() {
         }),
       });
 
-      if (!analysisResponse.ok) {
+      if (!analysisResponse.ok)
         throw new Error(`Analysis failed: ${analysisResponse.statusText}`);
-      }
-
       const analysisData = await analysisResponse.json();
       console.log("Analysis response:", analysisData);
 
-      // If we have a result, show it in the sidebar
+      // Check if result exists and doesn't contain an error or a message (which could be an error)
       if (analysisData.result) {
-        setAnalysisResult(analysisData.result);
-        setShowSidebar(true);
+        // Don't show sidebar for error intents or when there's an error message
+        const isErrorResult =
+          analysisData.result.error ||
+          (analysisData.result.message && !analysisData.result.type);
+
+        if (!isErrorResult) {
+          setAnalysisResult(analysisData.result);
+          setShowSidebar(true);
+        } else {
+          // Still set the result for error display in chat
+          setAnalysisResult(analysisData.result);
+          // But don't show sidebar
+          setShowSidebar(false);
+        }
       }
 
-      // Now get a streaming explanation using the /chat endpoint
       const chatResponse = await fetch("http://localhost:8000/chat", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           prompt,
           chat_history: chatHistory,
@@ -221,15 +223,15 @@ export default function ChatComponent() {
         }),
       });
 
-      if (!chatResponse.ok) {
-        throw new Error(`Chat failed: ${chatResponse.statusText}`);
-      }
-
       console.log("Chat response:", chatResponse.body);
+      if (!chatResponse.ok)
+        throw new Error(`Chat failed: ${chatResponse.statusText}`);
       const reader = chatResponse.body?.getReader();
       if (!reader) throw new Error("No reader");
 
       let fullContent = "";
+      let isError = false;
+
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -237,42 +239,50 @@ export default function ChatComponent() {
 
         for (const line of lines) {
           if (line.startsWith("data: ")) {
-            const data = line.slice(6);
+            const data = line.slice(6).trim();
             if (data === "[DONE]") {
+              // Final update to set the completed assistant message
               setMessages((prev) => {
                 const updated = [...prev];
-                updated[updated.length - 1] = {
-                  role: "assistant",
-                  content: fullContent,
-                  timestamp: new Date(),
-                };
+                const lastMessage = updated[updated.length - 1];
+                if (lastMessage?.role === "assistant") {
+                  updated[updated.length - 1] = {
+                    ...lastMessage,
+                    content: fullContent,
+                    timestamp: new Date(),
+                    error: isError, // Set the error flag from streamed responses
+                  };
+                }
                 return updated;
               });
-            } else {
-              try {
-                const parsed = JSON.parse(data);
-                if (parsed.content) {
-                  fullContent += parsed.content;
-                  setStreamContent(fullContent);
-                }
-              } catch (e) {
-                console.error("Parsing error:", e);
+              break;
+            }
+
+            try {
+              const parsed = JSON.parse(data);
+              if (parsed.content) {
+                fullContent += parsed.content;
+                setStreamContent(fullContent);
               }
+              // Track if any part of the message was flagged as an error
+              if (parsed.error) {
+                isError = true;
+              }
+            } catch (err) {
+              console.error("JSON parsing error in streamed chunk:", err, line);
             }
           }
         }
       }
     } catch (err: any) {
-      // Handle network or other errors
-      console.error("Error in processData:", err);
       const errorMessage = `I encountered an error: ${err.message}`;
-
       setMessages((prev) => {
         const updated = [...prev];
         updated[updated.length - 1] = {
           role: "assistant",
           content: errorMessage,
           timestamp: new Date(),
+          error: true, // Mark as error
         };
         return updated;
       });
@@ -281,11 +291,8 @@ export default function ChatComponent() {
       setStreamContent("");
     }
   };
-
   const handleDatasetSelect = (datasetId: string) => {
     setActiveDatasetId(datasetId);
-
-    // Find the dataset info
     const dataset = datasets.find((d) => d.id === datasetId);
     if (dataset) {
       setMessages((prev) => [
@@ -329,14 +336,17 @@ export default function ChatComponent() {
       case "aggregation":
         return <AggregationResults data={analysisResult} />;
       case "filter":
-        return <DataTable data={analysisResult.data} />;
+        return <DataTable data={analysisResult.data} intentType="filter" />;
       case "query":
         return analysisResult.data ? (
-          <DataTable data={analysisResult.data} />
+          <QueryResultCard
+            value={analysisResult.data}
+            note={analysisResult.note}
+          />
         ) : null;
       default:
         return (
-          <div className="p-4 text-gray-400">
+          <div className="p-4 text-gray-500">
             No visualization available for this result type.
           </div>
         );
@@ -354,27 +364,25 @@ export default function ChatComponent() {
   ];
 
   return (
-    <div className="flex h-screen text-gray-100 bg-gray-950 overflow-hidden w-full custom-scrollbar ">
-      {/* Main Chat Area */}
+    <div className="flex h-screen text-gray-800 bg-gray-200 overflow-hidden w-full custom-scrollbar">
       <div
         className={cn(
           "flex flex-col flex-1 h-full transition-all duration-300 ease-in-out",
           showSidebar && hasData ? "lg:pr-[600px]" : ""
         )}
       >
-        {/* Chat Header */}
         <Header
           leftContent={
             <IconHeader
               icon={Sparkles}
               text="DataPrompt"
-              iconColor="text-blue-400"
+              iconColor="text-blue-600"
             />
           }
           rightContent={
             datasets.length > 0 && (
               <div className="flex items-center">
-                <Database className="h-4 w-4 text-blue-400 mr-2" />
+                <Database className="h-4 w-4 text-blue-600 mr-2" />
                 <DatasetSelector
                   datasets={datasets}
                   activeDatasetId={activeDatasetId}
@@ -385,15 +393,13 @@ export default function ChatComponent() {
           }
         />
 
-        {/* Conditional Layout based on whether there are messages */}
         {!hasMessages ? (
-          // Empty state with centered input
           <EmptyState
             icon={Sparkles}
             title="Chat with DataPrompt"
             description="Upload your data and ask questions to get insights, visualizations, and forecasts."
-            iconColor="text-blue-400"
-            className="flex-1 bg-gray-950"
+            iconColor="text-blue-600"
+            className="flex-1 bg-gray-100"
             action={
               <>
                 <ChatInput
@@ -413,10 +419,8 @@ export default function ChatComponent() {
             }
           />
         ) : (
-          // Regular chat layout with messages and input at bottom
           <>
-            {/* Messages Area */}
-            <div className="flex-1 overflow-y-auto px-4 py-4 scroll-smooth bg-gray-950 custom-scrollbar">
+            <div className="flex-1 overflow-y-auto px-4 py-4 scroll-smooth bg-gray-100 custom-scrollbar">
               <MessageList
                 messages={messages}
                 isStreaming={!!streamContent}
@@ -426,8 +430,7 @@ export default function ChatComponent() {
               <div ref={messagesEndRef} />
             </div>
 
-            {/* Input Area at bottom */}
-            <div className="p-6 bg-gray-950 ">
+            <div className="p-6 bg-gray-100">
               <ChatInput
                 onSend={processData}
                 loading={loading}
@@ -439,8 +442,6 @@ export default function ChatComponent() {
         )}
       </div>
 
-      {/* Data Visualization Sidebar */}
-
       <Sidebar
         isOpen={showSidebar && hasData}
         onClose={() => setShowSidebar(false)}
@@ -449,7 +450,6 @@ export default function ChatComponent() {
         <DataView />
       </Sidebar>
 
-      {/* Toggle Sidebar Button */}
       {!showSidebar && hasData && (
         <ActionButton
           icon={BarChart}

@@ -1,4 +1,3 @@
-// components/ui/ActionButton.tsx
 "use client";
 
 import { LucideIcon } from "lucide-react";
@@ -23,10 +22,12 @@ export function ActionButton({
   ...props
 }: ActionButtonProps) {
   const variantStyles = {
-    primary: "bg-blue-600 text-white hover:bg-blue-700",
-    secondary: "bg-gray-700 text-white hover:bg-gray-600",
-    outline: "border border-gray-700 text-gray-300 hover:bg-gray-800",
-    ghost: "text-gray-300 hover:bg-gray-800",
+    primary: "bg-blue-600 text-white hover:bg-blue-700 focus:ring-blue-500",
+    secondary:
+      "bg-gray-800 text-white hover:bg-gray-700 focus:ring-gray-500 ring-2 ring-gray-400",
+    outline:
+      "border border-gray-300 text-gray-900 hover:bg-gray-100 focus:ring-blue-500",
+    ghost: "text-gray-900 hover:bg-gray-200 focus:ring-blue-500",
   };
 
   const sizeStyles = {
@@ -44,7 +45,7 @@ export function ActionButton({
   return (
     <button
       className={cn(
-        "rounded-full transition-all shadow-lg hover:shadow-xl focus:outline-none focus:ring-2 focus:ring-blue-500",
+        "rounded-full transition-all shadow-sm hover:shadow-md focus:outline-none focus:ring-2",
         variantStyles[variant],
         sizeStyles[size],
         className

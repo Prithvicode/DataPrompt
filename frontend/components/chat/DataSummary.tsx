@@ -25,12 +25,12 @@ export default function DataSummary({ data }: DataSummaryProps) {
   const numericStats = data.numeric_stats || {};
 
   return (
-    <div className="space-y-4 text-gray-100 p-2 custom-scrollbar">
+    <div className="space-y-4 text-gray-800 p-2 custom-scrollbar">
       {/* Dataset Overview */}
-      <Card className="bg-gray-900 border border-gray-800">
+      <Card className="bg-white border border-gray-200">
         <CardHeader className="pb-1">
           <div className="flex items-center gap-2">
-            <Database className="h-4 w-4 text-blue-400" />
+            <Database className="h-4 w-4 text-blue-500" />
             <CardTitle className="text-base">Dataset Overview</CardTitle>
           </div>
         </CardHeader>
@@ -49,9 +49,9 @@ export default function DataSummary({ data }: DataSummaryProps) {
           ].map((item) => (
             <div
               key={item.label}
-              className="bg-gray-800/50 p-3 rounded-lg border border-gray-700 hover:border-blue-500/30 transition-colors"
+              className="bg-gray-100 p-3 rounded-lg border border-gray-300 hover:border-blue-500/30 transition-colors"
             >
-              <div className="text-xs text-gray-400">{item.label}</div>
+              <div className="text-xs text-gray-500">{item.label}</div>
               <div className="text-lg font-semibold">{item.value}</div>
             </div>
           ))}
@@ -61,9 +61,9 @@ export default function DataSummary({ data }: DataSummaryProps) {
       {/* Tabs for Charts */}
       <Tabs
         defaultValue="product-category"
-        className="bg-gray-900 border border-gray-800 rounded-lg"
+        className="bg-white border border-gray-200 rounded-lg"
       >
-        <TabsList className="grid grid-cols-3 gap-1 p-1 bg-gray-800 rounded-lg">
+        <TabsList className="grid grid-cols-3 gap-1 p-1 bg-gray-100 rounded-lg">
           <TabsTrigger value="product-category">Category</TabsTrigger>
           <TabsTrigger value="customer-segment">Segments</TabsTrigger>
           <TabsTrigger value="monthly-performance">Monthly</TabsTrigger>
@@ -90,22 +90,22 @@ export default function DataSummary({ data }: DataSummaryProps) {
 
       {/* Numeric Stats Table */}
       {Object.keys(numericStats).length > 0 && (
-        <Card className="bg-gray-900 border border-gray-800">
+        <Card className="bg-white border border-gray-200">
           <CardHeader className="pb-1">
             <div className="flex items-center gap-2">
-              <BarChart className="h-4 w-4 text-blue-400" />
+              <BarChart className="h-4 w-4 text-blue-500" />
               <CardTitle className="text-base">Numeric Stats</CardTitle>
             </div>
           </CardHeader>
           <CardContent className="pt-2">
-            <div className="overflow-x-auto rounded-lg border border-gray-800">
+            <div className="overflow-x-auto rounded-lg border border-gray-200">
               <Table>
-                <TableHeader className="bg-gray-800/50">
-                  <TableRow className="hover:bg-transparent border-gray-800">
+                <TableHeader className="bg-gray-100">
+                  <TableRow className="hover:bg-transparent border-gray-200">
                     {["Column", "Mean", "Min", "Max", "Std Dev"].map((head) => (
                       <TableHead
                         key={head}
-                        className="text-gray-300 text-right first:text-left"
+                        className="text-gray-700 text-right first:text-left"
                       >
                         {head}
                       </TableHead>
@@ -117,11 +117,11 @@ export default function DataSummary({ data }: DataSummaryProps) {
                     ([col, stats]: [string, any], i) => (
                       <TableRow
                         key={col}
-                        className={`hover:bg-gray-800/30 border-gray-800 ${
-                          i % 2 === 0 ? "bg-gray-900" : "bg-gray-900/50"
+                        className={`hover:bg-gray-100 border-gray-200 ${
+                          i % 2 === 0 ? "bg-white" : "bg-gray-50"
                         }`}
                       >
-                        <TableCell className="text-gray-200 font-medium">
+                        <TableCell className="text-gray-800 font-medium">
                           {col}
                         </TableCell>
                         <TableCell className="text-right">

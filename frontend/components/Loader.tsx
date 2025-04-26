@@ -32,9 +32,10 @@ export const Loader = ({ loading }: { loading: boolean }) => {
 
   return (
     <div className="flex justify-center items-center py-8">
-      <div className="w-6 h-6 border-4 border-blue-400 border-dashed rounded-full animate-spin"></div>
-      <span className="ml-3 text-sm text-gray-400">
-        Thinking... {formatTime(thinkingTime)}
+      <div className="w-6 h-6 border-4 border-blue-700 border-dashed rounded-full animate-spin"></div>
+      <span className="ml-3 text-sm text-black ">
+        <span className="animate-pulse">Thinking...</span>{" "}
+        {formatTime(thinkingTime)}
       </span>
     </div>
   );

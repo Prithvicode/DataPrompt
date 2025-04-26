@@ -23,19 +23,19 @@ export default function FileAttachment({
   const extension = file.name.split(".").pop()?.toUpperCase() || "";
 
   return (
-    <div className="flex items-center gap-2 p-2 bg-gray-800/50 border border-gray-700 rounded-md w-fit max-w-full">
-      <div className="flex-shrink-0 w-8 h-8 bg-gray-700 rounded flex items-center justify-center text-gray-300">
+    <div className="flex items-center gap-2 p-2 bg-white border border-gray-300 rounded-md w-fit max-w-full shadow-sm shadow-blue-400">
+      <div className="flex-shrink-0 w-8 h-8 bg-gray-200 rounded flex items-center justify-center text-gray-600">
         <File className="h-4 w-4" />
       </div>
 
       <div className="min-w-0 flex-1">
         <p
-          className="text-sm font-medium text-gray-200 truncate"
+          className="text-sm font-medium text-gray-800 truncate"
           title={file.name}
         >
           {file.name}
         </p>
-        <p className="text-xs text-gray-400">
+        <p className="text-xs text-gray-500">
           {extension} • {formatFileSize(file.size)}
         </p>
       </div>
@@ -46,7 +46,7 @@ export default function FileAttachment({
           variant="ghost"
           size="sm"
           onClick={onRemove}
-          className="h-6 w-6 p-0 rounded-full text-gray-400 hover:text-white hover:bg-gray-700"
+          className="h-6 w-6 p-0 rounded-full text-gray-500 hover:bg-gray-200"
         >
           <span className="sr-only">Remove file</span>
           <X className="h-4 w-4" />

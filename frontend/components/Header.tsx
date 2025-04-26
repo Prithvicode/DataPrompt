@@ -20,8 +20,8 @@ export function Header({
   return (
     <div
       className={cn(
-        "py-3 px-4 flex items-center justify-between bg-gray-950",
-        borderBottom && "border-b border-gray-800",
+        "py-3 px-4 flex items-center justify-between bg-white text-gray-900", // Changed to light theme colors
+        borderBottom && "border-b border-gray-300", // Lighter border for light theme
         className
       )}
     >

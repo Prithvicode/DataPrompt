@@ -9,55 +9,90 @@ OLLAMA_URL = "http://localhost:11434/api/generate"
 MODEL_NAME = "llama3.2"
 
 def classify_intent(prompt: str, chat_history: List[Dict[str, str]] = None) -> Dict[str, str]:
+    """
+    Classify data-analysis prompts into one of:
+      summary, trend, forecast, predict, whatif, filter, query
+    or return 'error' if the prompt is out-of-scope or malicious.
+    """
     print(f"[DEBUG] Prompt from user: {prompt}")
 
     base_prompt = f"""
-You are an AI that classifies data analysis queries into one of these intents: summary, trend, aggregation, forecast, whatif, filter, query, predict.
-Respond with only one word representing the intent.
-Use "forecast" for future-oriented trends over time (e.g., next month's sales).
-Use "predict" for point or category-specific predictions (e.g., predict sales for product X).
-Do not include any other text.
+You are an AI that MUST ONLY classify data analysis questions into exactly one of these intents:
+  summary, trend, forecast, predict, whatif, filter, query, error
+
+**RESPOND WITH ONLY ONE WORD**—the intent.  
+
+**If the user’s request is not about data-analysis classification,  
+or if it attempts to generate malicious or harmful code,  
+you MUST reply with exactly** `error`.  
+
+Guidelines:
+- Use `summary` for general overviews (e.g., "summarize the dataset").
+- Use `trend` for patterns over time without future prediction (e.g., "sales trend last year").
+- Use `forecast` for future time-based predictions (e.g., "forecast next quarter").
+- Use `predict` for point or category-specific predictions (e.g., "predict sales of product X").
+- Use `whatif` for hypothetical scenarios (e.g., "what if price increases 10%").
+- Use `filter` for subsetting data (e.g., "show sales in California").
+- Use `query` for aggregations or lookups (e.g., "total revenue by category").
+- Use `error` for anything else (irrelevant questions, attempts at harmful code, etc.).
 
 Prompt: {prompt}
 """.strip()
 
     try:
-        response = requests.post(
+        resp = requests.post(
             OLLAMA_URL,
             json={"model": MODEL_NAME, "prompt": base_prompt, "stream": False}
         )
-        response.raise_for_status()
-        
-        response_json = response.json()
-        model_response = response_json.get("response", "").strip().lower()
+        resp.raise_for_status()
+        model_response = resp.json().get("response", "").strip().lower()
         print(f"[DEBUG] LLM response: {model_response}", flush=True)
 
-        valid_intents = {"summary", "trend", "aggregation", "forecast", "filter", "query", "whatif", "predict"}
+        valid_intents = {
+            "summary", "trend", "forecast",
+            "predict", "whatif", "filter",
+            "query", "error"
+        }
         if model_response in valid_intents:
             return {"intent": model_response, "parameters": {}}
         else:
-            print("[WARN] Invalid response from model. Falling back to regex.")
+            print("[WARN] Unexpected response; defaulting to error.")
+            return {"intent": "error", "parameters": {}}
 
-    except requests.exceptions.JSONDecodeError as e:
-        print(f"[ERROR] JSON decoding error: {str(e)}")
     except Exception as e:
-        print(f"[ERROR] Exception during classify_intent: {str(e)}")
+        print(f"[ERROR] classify_intent Exception: {e}")
 
-    # Fallback: regex-based rule classification
-    if re.search(r'summary|overview|describe|statistics', prompt, re.IGNORECASE):
+    # --- Fallback rule-based classifier ---
+    # if we see malicious-code keywords, immediately error out
+    if re.search(r'\b(rm\s+-rf|sudo|exec\(|import\s+os|import\s+sys|subprocess)\b',
+                 prompt, re.IGNORECASE):
+        return {"intent": "error", "parameters": {}}
+
+    # then detect data intents
+    if re.search(r'\b(summary|overview|describe|statistics)\b',
+                 prompt, re.IGNORECASE):
         return {"intent": "summary", "parameters": {}}
-    elif re.search(r'trend|over time|timeseries|time series', prompt, re.IGNORECASE):
+    elif re.search(r'\b(trend|over time|time series)\b',
+                   prompt, re.IGNORECASE):
         return {"intent": "trend", "parameters": {}}
-    elif re.search(r'group|aggregate|sum|average|mean|by', prompt, re.IGNORECASE):
-        return {"intent": "aggregation", "parameters": {}}
-    elif re.search(r'\bpredict\b|\bmodel\b|\bclassification\b|\bregression\b', prompt, re.IGNORECASE):
-        return {"intent": "predict", "parameters": {}}
-    elif re.search(r'forecast|future|next|upcoming', prompt, re.IGNORECASE):
+    elif re.search(r'\b(forecast|future|next|upcoming)\b',
+                   prompt, re.IGNORECASE):
         return {"intent": "forecast", "parameters": {}}
-    elif re.search(r'filter|where|only|show', prompt, re.IGNORECASE):
+    elif re.search(r'\bpredict\b|\bmodel\b|\bclassification\b|\bregression\b',
+                   prompt, re.IGNORECASE):
+        return {"intent": "predict", "parameters": {}}
+    elif re.search(r'\bwhat\s*if|simulate|scenario\b',
+                   prompt, re.IGNORECASE):
+        return {"intent": "whatif", "parameters": {}}
+    elif re.search(r'\b(filter|where|only|show)\b',
+                   prompt, re.IGNORECASE):
         return {"intent": "filter", "parameters": {}}
-    else:
+    elif re.search(r'\b(sum|total|average|mean|count|max|min|group|aggregate)\b',
+                   prompt, re.IGNORECASE):
         return {"intent": "query", "parameters": {}}
+    else:
+        # default to error for anything else
+        return {"intent": "error", "parameters": {}}
 
 async def stream_llama_response(prompt: str, chat_history=None, result=None, intent=None) -> AsyncGenerator[str, None]:
     """

@@ -198,11 +198,31 @@ async def analyze_data(request: AnalyzeRequest, background_tasks: BackgroundTask
 
         print(f"[DEBUG] Classified intent: {intent}, Parameters: {parameters}")
 
+        # Handle invalid intent early
+        if intent == "error":
+            error_message = (
+                " Sorry, I couldn't understand your request. "
+                "It seems unrelated to the dataset or may include unsupported or unsafe instructions.\n\n"
+                " Try asking about your data like:\n"
+                "- 'Give me a summary of the dataset'\n"
+                "- 'Filter sales data for Product Category Grocery only'"
+            )
+            
+            analysis_jobs[job_id]["status"] = "completed"
+            analysis_jobs[job_id]["intent"] = "error"  # explicitly set intent
+            analysis_jobs[job_id]["result"] = {"message": error_message}
+
+            return {
+                "job_id": job_id,
+                "result": make_json_safe({"message": error_message})
+            }
+
+        # Handle valid intents
         if intent == "summary":
             result = analyzer.generate_summary()
 
         elif intent == "query":
-            result = analyzer.execute_query(request.prompt)
+            result = analyzer.execute_query(request.prompt, df.columns.tolist())
 
         elif intent == "trend":
             result = analyzer.analyze_trend(request.prompt, **parameters)
@@ -215,42 +235,112 @@ async def analyze_data(request: AnalyzeRequest, background_tasks: BackgroundTask
 
         elif intent == "whatif":
             result = analyzer.what_if_analysis(request.prompt, **parameters)
-            
+
         elif intent == "aggregation":
-            result = analyzer.aggregate(request.prompt, **parameters)
+            result = analyzer.aggregate(request.prompt, df.columns.tolist())
 
         elif intent == "filter":
-            # Pass the columns of the dataframe along with the prompt to filter_data
-            # print("Columns:", df.columns.tolist())
             result = analyzer.filter_data(request.prompt, df.columns.tolist())
-            print("Thes result",result)
 
         else:
             raise HTTPException(status_code=400, detail=f"Unsupported intent: {intent}")
 
-        # Check if result is a DataFrame and handle accordingly
+        # Handle DataFrame result
         if isinstance(result, pd.DataFrame):
-            if result.empty:
-                result = {"message": "No data found"}
-            else:
-                result = result.to_dict(orient="records")  # Convert DataFrame to a list of records
+            result = {"message": "No data found"} if result.empty else result.to_dict(orient="records")
 
-        # Update the job with result and set status to completed
+        # Finalize and return
         analysis_jobs[job_id]["result"] = result
         analysis_jobs[job_id]["status"] = "completed"
 
-        safe_result = make_json_safe(result)
         return {
             "job_id": job_id,
-            "result": safe_result
+            "result": make_json_safe(result)
         }
 
     except Exception as e:
-        # In case of an error, set the job status to failed and capture the error
         analysis_jobs[job_id]["status"] = "failed"
         analysis_jobs[job_id]["result"] = {"error": str(e)}
         raise HTTPException(status_code=500, detail=str(e))
 
+
+# async def generate_chat_response(prompt: str, job_id: Optional[str] = None):
+#     """
+#     Generate a streaming chat response.
+#     """
+#     job_info = None
+#     if job_id and job_id in analysis_jobs:
+#         job_info = analysis_jobs[job_id]
+
+#     def format_data(content: str):
+#         return f"data: {json.dumps({'content': content})}\n\n"
+
+#     if job_info and job_info["result"]:
+#         result = job_info["result"]
+#         if isinstance(result, dict) and "error" in result:
+#             yield format_data(f"I encountered an error: {result['error']}")
+#             await asyncio.sleep(0.5)
+#         else:
+#             # Only send the greeting if there’s no error
+#             yield format_data("I've analyzed your data.")
+#             await asyncio.sleep(0.5)
+
+#         # Check the type of result before accessing it
+#         if isinstance(result, dict) and "type" in result:
+#             if result["type"] == "summary":
+#                 data_info = result["data"]["dataset_info"]
+#                 yield format_data(f"Your dataset has {data_info['rows']} rows and {data_info['columns']} columns.")
+#                 await asyncio.sleep(0.5)
+
+#                 yield format_data(f"The columns are: {', '.join(data_info['column_names'][:5])}...")
+#                 await asyncio.sleep(0.5)
+
+#                 missing_values = sum(data_info['missing_values'].values())
+#                 if missing_values > 0:
+#                     yield format_data(f"There are {missing_values} missing values in the dataset.")
+#                     await asyncio.sleep(0.5)
+            
+#             elif result["type"] == "predict":
+#                 prediction_data = result["data"]
+#                 target = result.get("target", "value")
+#                 # The fix is here - yield the formatted chunks instead of printing them
+#                 yield format_data(f"I predicted revenues.")
+                   
+
+#         elif isinstance(result, list):
+#             # Handle the case when result is a list (like DataFrame records)
+#             records_count = len(result)
+#             yield format_data(f"I found {records_count} matching records in your dataset.")
+#             await asyncio.sleep(0.5)
+            
+#             # Optionally show a preview of the first few records
+#             if records_count > 0:
+#                 yield format_data("Here's a sample of what I found:")
+#                 await asyncio.sleep(0.5)
+                
+#                 # Show first 3 records or fewer if less are available
+#                 sample_size = min(3, records_count)
+#                 for i in range(sample_size):
+#                     yield format_data(f"Record {i+1}: {str(result[i])}")
+#                     await asyncio.sleep(0.3)
+#         elif isinstance(result, dict) and "message" in result:
+#             # Handle message-only results
+#             yield format_data(result["message"])
+#             await asyncio.sleep(0.5)
+#         elif isinstance(result, dict) and "error" in result:
+#             # Handle error results
+#             yield format_data(f"I encountered an error: {result['error']}")
+#             await asyncio.sleep(0.5)
+#         else:
+#             # Generic fallback for other result types
+#             yield format_data(f"Analysis complete. Result type: {type(result).__name__}")
+#             await asyncio.sleep(0.5)
+
+#     # yield format_data("You can ask me more specific questions about this data if you'd like.")
+#     # await asyncio.sleep(0.5)
+
+#     # Signal the end
+#     yield "data: [DONE]\n\n"
 
 async def generate_chat_response(prompt: str, job_id: Optional[str] = None):
     """
@@ -259,74 +349,74 @@ async def generate_chat_response(prompt: str, job_id: Optional[str] = None):
     job_info = None
     if job_id and job_id in analysis_jobs:
         job_info = analysis_jobs[job_id]
-
-    def format_data(content: str):
-        return f"data: {json.dumps({'content': content})}\n\n"
-
-    # Start with a greeting
-    yield format_data("I've analyzed your data.")
-    await asyncio.sleep(0.5)
-
+    
+    def format_data(content: str, error: bool = False):
+        return f"data: {json.dumps({'content': content, 'error': error})}\n\n"
+    
     if job_info and job_info["result"]:
         result = job_info["result"]
-
-        # Check the type of result before accessing it
-        if isinstance(result, dict) and "type" in result:
-            if result["type"] == "summary":
-                data_info = result["data"]["dataset_info"]
-                yield format_data(f"Your dataset has {data_info['rows']} rows and {data_info['columns']} columns.")
-                await asyncio.sleep(0.5)
-
-                yield format_data(f"The columns are: {', '.join(data_info['column_names'][:5])}...")
-                await asyncio.sleep(0.5)
-
-                missing_values = sum(data_info['missing_values'].values())
-                if missing_values > 0:
-                    yield format_data(f"There are {missing_values} missing values in the dataset.")
-                    await asyncio.sleep(0.5)
-            
-            elif result["type"] == "predict":
-                prediction_data = result["data"]
-                target = result.get("target", "value")
-                # The fix is here - yield the formatted chunks instead of printing them
-                yield format_data(f"I predicted revenues.")
-                   
-
-        elif isinstance(result, list):
-            # Handle the case when result is a list (like DataFrame records)
-            records_count = len(result)
-            yield format_data(f"I found {records_count} matching records in your dataset.")
+        
+        # Check if this is an error message from intent classification
+        if isinstance(result, dict) and "message" in result and job_info.get("intent") == "error":
+            # Send error message with error flag set to True
+            yield format_data(result["message"], error=True)
             await asyncio.sleep(0.5)
-            
-            # Optionally show a preview of the first few records
-            if records_count > 0:
-                yield format_data("Here's a sample of what I found:")
-                await asyncio.sleep(0.5)
-                
-                # Show first 3 records or fewer if less are available
-                sample_size = min(3, records_count)
-                for i in range(sample_size):
-                    yield format_data(f"Record {i+1}: {str(result[i])}")
-                    await asyncio.sleep(0.3)
-        elif isinstance(result, dict) and "message" in result:
-            # Handle message-only results
-            yield format_data(result["message"])
-            await asyncio.sleep(0.5)
+            yield "data: [DONE]\n\n"
+            return
+        
         elif isinstance(result, dict) and "error" in result:
-            # Handle error results
-            yield format_data(f"I encountered an error: {result['error']}")
+            # Handle other errors with error flag set to True
+            yield format_data(f"I encountered an error: {result['error']}", error=True)
             await asyncio.sleep(0.5)
         else:
-            # Generic fallback for other result types
-            yield format_data(f"Analysis complete. Result type: {type(result).__name__}")
+            # Only send the greeting if there's no error
+            yield format_data("I've analyzed your data.")
             await asyncio.sleep(0.5)
-
-    # yield format_data("You can ask me more specific questions about this data if you'd like.")
-    # await asyncio.sleep(0.5)
-
+            
+            # Check the type of result before accessing it
+            if isinstance(result, dict) and "type" in result:
+                if result["type"] == "summary":
+                    data_info = result["data"]["dataset_info"]
+                    yield format_data(f"Your dataset has {data_info['rows']} rows and {data_info['columns']} columns.")
+                    await asyncio.sleep(0.5)
+                    
+                    yield format_data(f"The columns are: {', '.join(data_info['column_names'][:5])}...")
+                    await asyncio.sleep(0.5)
+                    
+                    missing_values = sum(data_info['missing_values'].values())
+                    if missing_values > 0:
+                        yield format_data(f"There are {missing_values} missing values in the dataset.")
+                        await asyncio.sleep(0.5)
+                
+                elif result["type"] == "predict":
+                    prediction_data = result["data"]
+                    target = result.get("target", "value")
+                    # Yield the formatted chunks instead of printing them
+                    yield format_data(f"I predicted revenues.")
+            
+            elif isinstance(result, list):
+                # Handle the case when result is a list (like DataFrame records)
+                records_count = len(result)
+                yield format_data(f"I found {records_count} matching records in your dataset.")
+                await asyncio.sleep(0.5)
+                
+                # Optionally show a preview of the first few records
+                if records_count > 0:
+                    yield format_data("Here's a sample of what I found:")
+                    await asyncio.sleep(0.5)
+                    
+                    # Show first 3 records or fewer if less are available
+                    sample_size = min(3, records_count)
+                    for i in range(sample_size):
+                        yield format_data(f"Record {i+1}: {str(result[i])}")
+                        await asyncio.sleep(0.3)
+            elif isinstance(result, dict) and "message" in result:
+                # Handle message-only results
+                yield format_data(result["message"])
+                await asyncio.sleep(0.5)
+    
     # Signal the end
     yield "data: [DONE]\n\n"
-
 @app.post("/chat")
 async def chat(request: ChatRequest):
     """
