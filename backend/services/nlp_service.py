@@ -31,8 +31,8 @@ Guidelines:
 - Use `summary` for general overviews (e.g., "summarize the dataset").
 - Use `trend` for patterns over time without future prediction (e.g., "sales trend last year").
 - Use `forecast` for future time-based predictions (e.g., "forecast next quarter").
-- Use `predict` for point or category-specific predictions (e.g., "predict sales of product X").
-- Use `whatif` for hypothetical scenarios (e.g., "what if price increases 10%").
+- Use `predict` for point or category-specific predictions (e.g., only for "Predict all revenues").
+- Use `whatif` for hypothetical scenarios (e.g., "what if price increases 10%", "What would the predicted revenue if unites are 10..." ).
 - Use `filter` for subsetting data (e.g., "show sales in California").
 - Use `query` for aggregations or lookups (e.g., "total revenue by category").
 - Use `error` for anything else (irrelevant questions, attempts at harmful code, etc.).
@@ -191,7 +191,8 @@ def parse_whatif_scenarios(prompt: str,
     """
     base_prompt = f"""
 User prompt: {prompt}
-Extract and return _only_ the values in this exact format (with your numbers/strings filled in), no extra text:
+Extract and return _only_ the values in this exact format (with your numbers/strings filled in), no extra text, 
+if values are not present or null then use  appropiate defaults: NOTE: There should be no null in any of the values.: 
 
 {{
   'UnitsSold': <int>,
@@ -204,14 +205,12 @@ Extract and return _only_ the values in this exact format (with your numbers/str
   'ProductCategory': '<string>',
   'ProductName': '<string>',
   'Region': '<string>',
-  'CustomerSegment': '<string>',
+  'CustomerSegment': '<string>',  # Online, Retail, etc.
   'ProfitPerUnit': <float>,       # = UnitPrice - CostPerUnit  
   'Profit': <float>,              # = UnitsSold * ProfitPerUnit  
   'ProfitMargin': <float>         # = ProfitPerUnit / UnitPrice  
 }}
 """
-
-
     response = requests.post(
         OLLAMA_URL,
         json={
@@ -227,15 +226,63 @@ Extract and return _only_ the values in this exact format (with your numbers/str
     
     print(f"[DEBUG] Extracted prediciton features  Response: {model_response}")
     return model_response
-   
+
+def extract_forecast_period(prompt: str):
+    base_prompt = f"""
+You are a strict JSON API. Do not return explanations, code, or comments.
+
+Your task: extract the number of periods (e.g., months or years) from the user prompt below.
+
+User prompt:
+\"\"\"{prompt}\"\"\"
+
+Return only this exact format, as valid JSON:
+{{
+  "ForecastPeriod": <int>  // Must be an integer ≥ 1
+}}
+
+If you cannot find a number in the prompt, return:
+{{
+  "ForecastPeriod": 3
+}}
+
+Respond with only the JSON object, nothing else.
+"""
 
 
+    response = requests.post(
+        OLLAMA_URL,
+        json={
+            "model": MODEL_NAME,
+            "prompt": base_prompt,
+            "stream": False
+        }
+    )
+    response.raise_for_status()
+    response_json = response.json()
+
+    model_response = response_json.get("response", "").strip()
+    print(f"[DEBUG] Model raw response: {model_response}")  # Add this
+
+    try:
+        if model_response.startswith("{"):
+            forecast_dict = json.loads(model_response.replace("'", '"'))
+            forecast_period = int(forecast_dict.get("ForecastPeriod", 3))
+        else:
+            forecast_period = int(model_response)
+        # Ensure forecast_period is at least 1
+        if forecast_period <= 0:
+            print(f"[WARN] Invalid forecast period {forecast_period}. Using default 3.")
+            forecast_period = 3
+    except Exception as e:
+        print(f"[ERROR] Failed to parse model response: {e}")
+        forecast_period = 3  # fallback
+
+    print(f"[DEBUG] Extracted Forecast Period: {forecast_period}")
+    return forecast_period
+  
 if __name__ == "__main__":
-    user_prompt = "What if UnitsSold increases by 10% and UnitPrice goes up by 20 absolute for Electronics→Smartphone in North/Retail, with promo applied and holiday status 0, temp 25, foot traffic 400?"
-    scenarios = parse_whatif_scenarios(user_prompt)
-    # scenarios is now a list of dicts you can feed into what_if_predict()
-    print(scenarios)
+    result = extract_forecast_period("Forecast the next 12 months of sales for the product.")  
+    print("Result:", result) 
 
- 
-   
 

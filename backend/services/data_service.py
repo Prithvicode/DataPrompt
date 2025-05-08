@@ -11,8 +11,10 @@ import json
 # from services.prepare_data_for_prediction import forecast_weekly_sales, forecast_monthly_sales  # Adjust to your actual import path
 from dateutil.parser import parse as parse_date
 
-from services.nlp_service import generate_panda_code_from_prompt, classify_forecast_intent, parse_whatif_scenarios
-from services.forecast_service import process_and_predict, process_whatif
+from services.nlp_service import generate_panda_code_from_prompt, classify_forecast_intent, parse_whatif_scenarios, extract_forecast_period
+from services.forecast_service import process_and_predict, process_whatif, process_forecast
+
+
 
 # from services.prepare_data_for_prediction import predict_sales, forecast_weekly_sales, forecast_monthly_sales
 
@@ -593,7 +595,8 @@ class DataAnalyzer:
             print(f"[DEBUG] Filtering successful - original size: {len(self.df)}, filtered size: {len(result_df)}")
             return {
                 "type": "filter",
-                "data": result_df
+                "data": result_df,
+                "user_input": prompt,
             }
                 
         except Exception as e:
@@ -881,25 +884,30 @@ class DataAnalyzer:
         Forecast future values based on historical data.
         """
         print(f"[DEBUG] Forecasting with prompt: {prompt}")
+        forecast_period  = extract_forecast_period(prompt)
         
-        # Placeholder for actual forecasting logic
-        forecasted_data = {
-            "future_dates": [],
-            "predicted_values": []
-        }
-        
-        # Example of how to structure the response
+        print(f"[DEBUG] Forecasting with prompt: {forecast_period}")
+
+        combined_data = process_forecast(df=self.df, forecast_periods=forecast_period)
+
+        print(f"[DEBUG] Combined forecast result: {combined_data}")
+
         return {
             "type": "forecast",
-            "data": forecasted_data
+            "data": combined_data,
         }
-
+    
     def what_if_analysis(self, prompt: str, **parameters):
         feature_input = parse_whatif_scenarios(prompt, self.df.columns.tolist())
-        
+        print(f"[DEBUG] What-if analysis input: {feature_input}")
         result =  process_whatif(feature_input)
         
-        print(f"[DEBUG] What-if analysis input: {feature_input}")
+        print(f"[DEBUG] What-if analysis result: {result}")
+
+        return {
+        "type" : "whatif",
+        "data" : result,
+        "user_input" : prompt}
 
     
     def predict(self, prompt: str, **parameters):
@@ -914,3 +922,20 @@ class DataAnalyzer:
             "r2" : r2,
             "visualization" : visualization
         }
+    
+
+if __name__ == "__main__":
+
+    user_prompt = """
+    What if UnitsSold increases by 10% and UnitPrice goes up by 20 absolute for Electronics→Smartphone in North/Retail, with promo applied and holiday status 0, temp 25, foot traffic 400?
+    """
+
+    user_prompt2 = """ What if UnitsSold is 10 and UnitPrice is 425.48 for Grocery → Cereal in the East region, with promotion not applied, holiday status 0, temperature 18.2°C, and foot traffic 100? """
+
+    forecast_prompt ="""forecast revenue for next 12 months"""
+    da = DataAnalyzer()
+
+    result = da.what_if_analysis(user_prompt)
+    # result = da.forecast(forecast_prompt)
+    print(f"[DEBUG] What-if analysis result: {result}")
+ 

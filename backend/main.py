@@ -286,13 +286,50 @@ async def generate_chat_response(prompt: str, job_id: Optional[str] = None):
             yield format_data("[DONE]")
             return
         
-        yield format_data("✅ Data analyzed. Now generating explanation...")
+        yield format_data("✅ Data analyzed. Now generating explanation...\n\n")
         await asyncio.sleep(0.1)
 
         if isinstance(result, pd.DataFrame):
             result = json.dumps(result.to_dict(orient="records"), indent=2)
 
-        llama_prompt = f"Explain the following analysis result in simple terms: {result}"
+        if job_info.get("intent") == "whatif":
+            # Separate historical and forecast data if needed
+            forecast_data_only = result[result["type"] == "forecast"].to_string(index=False)
+
+            llama_prompt = f"""
+            You are an assistant in the DataPrompt app. Your task is to explain analysis results clearly and simply for end users.
+
+            - Keep the explanation short and easy to understand.
+            - Currency is in NRs (Nepali Rupees).
+            - Format the response as clean, user-friendly **Markdown** for the frontend UI.
+            - Explain the analysis based on the user's original intent.
+
+            Context:
+            - **User Intent**: {job_info.get("intent")}
+            - **User Prompt**: {prompt}
+
+            - **Forecast Result (after applying what-if changes)**:
+            {forecast_data_only}
+
+            Focus only on the **forecasted changes** after applying the what-if scenario. Do not describe historical data or overall trends unless necessary.
+            """
+        else:
+            llama_prompt = f"""
+            You are an assistant in the DataPrompt app. Your task is to explain analysis results clearly and simply for end users.
+
+            - Keep the explanation short and easy to understand.
+            - Currency is in NRs (Nepali Rupees).
+            - Format the response as clean, user-friendly **Markdown** for the frontend UI.
+            - Explain the analysis based on the user's original intent.
+
+            Context:
+            - **User Intent**: {job_info.get("intent")}
+            - **User Prompt**: {prompt}
+            - **Analyzed Result**: {result}
+
+            Return only the Markdown explanation.
+            """
+
 
         try:
             async with aiohttp.ClientSession() as session:
@@ -317,6 +354,7 @@ async def generate_chat_response(prompt: str, job_id: Optional[str] = None):
         yield format_data("No analysis result available", error=True)
     
     yield format_data("[DONE]")
+
 OLLAMA_URL = "http://localhost:11434/api/generate"
 MODEL_NAME = "llama3.2"
 
@@ -346,7 +384,7 @@ def generate_llama_response(prompt: str):
     table_str = json.dumps(sample_df.to_dict(orient="records"), indent=2)
 
     full_prompt = (
-        "Explain the following analysis result in simple terms:\n\n"
+        "Explain the following analysis result in simple terms and properly structure it in the markdown:\n\n"
         f"{table_str}\n\n"
         f"{prompt.strip()}"
     )

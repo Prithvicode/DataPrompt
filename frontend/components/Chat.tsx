@@ -23,6 +23,7 @@ import { SuggestionGrid } from "./SuggestionGrid";
 import PredictionResults from "./chat/PredictResults";
 import { Loader } from "./Loader";
 import QueryResultCard from "./chat/QueryResultCard";
+import WhatIfResultCard from "./chat/WhatifResultCard";
 
 export default function ChatComponent() {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -40,6 +41,12 @@ export default function ChatComponent() {
   const [uploadedDatasetId, setUploadedDatasetId] = useState<string | null>(
     null
   );
+  const [cachedResults, setCachedResults] = useState<any[]>([]);
+
+  useEffect(() => {
+    const stored = JSON.parse(localStorage.getItem("cachedResults") || "[]");
+    setCachedResults(stored);
+  }, []);
 
   useEffect(() => {
     document.body.style.overflow = "hidden";
@@ -55,6 +62,21 @@ export default function ChatComponent() {
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
+
+  // Cache results in local storage
+  const saveResultToLocal = (result: AnalysisResult) => {
+    const existing = JSON.parse(localStorage.getItem("cachedResults") || "[]");
+    const newResult = {
+      id: Date.now(), // unique ID based on timestamp
+      timestamp: new Date(),
+      type: result.type,
+      result,
+    };
+    localStorage.setItem(
+      "cachedResults",
+      JSON.stringify([newResult, ...existing])
+    );
   };
 
   const fetchDatasetsData = async () => {
@@ -124,183 +146,6 @@ export default function ChatComponent() {
       setLoading(false);
     }
   };
-
-  // const processData = async (prompt: string, attachedFile: File | null) => {
-  //   if (!prompt.trim() && !attachedFile) return;
-
-  //   setMessages((prev) => [
-  //     ...prev,
-  //     {
-  //       role: "user",
-  //       content: prompt,
-  //       timestamp: new Date(),
-  //       file: attachedFile
-  //         ? {
-  //             name: attachedFile.name,
-  //             type: attachedFile.type,
-  //             size: attachedFile.size,
-  //           }
-  //         : null,
-  //     },
-  //   ]);
-
-  //   setLoading(true);
-  //   setStreamContent("");
-  //   setAnalysisResult(null);
-
-  //   let datasetId = uploadedDatasetId || activeDatasetId;
-  //   if (!datasetId) {
-  //     setMessages((prev) => [
-  //       ...prev,
-  //       {
-  //         role: "assistant",
-  //         content: "Please upload a file first or select a dataset to analyze.",
-  //         timestamp: new Date(),
-  //       },
-  //     ]);
-  //     setLoading(false);
-  //     return;
-  //   }
-
-  //   // if (!datasetId) {
-  //   //   if (!attachedFile) {
-  //   //     setMessages((prev) => [
-  //   //       ...prev,
-  //   //       {
-  //   //         role: "assistant",
-  //   //         content:
-  //   //           "Please upload a file first or select a dataset to analyze.",
-  //   //         timestamp: new Date(),
-  //   //       },
-  //   //     ]);
-  //   //     setLoading(false);
-  //   //     return;
-  //   //   }
-  //   //   setLoading(false);
-  //   //   return;
-  //   // }
-
-  //   const chatHistory = messages
-  //     .slice(-10)
-  //     .map((msg) => ({ role: msg.role, content: msg.content }));
-
-  //   setMessages((prev) => [
-  //     ...prev,
-  //     { role: "assistant", content: "", timestamp: new Date() },
-  //   ]);
-
-  //   try {
-  //     const analysisResponse = await fetch("http://localhost:8000/analyze", {
-  //       method: "POST",
-  //       headers: { "Content-Type": "application/json" },
-  //       body: JSON.stringify({
-  //         prompt,
-  //         dataset_id: datasetId,
-  //         chat_history: chatHistory,
-  //       }),
-  //     });
-
-  //     if (!analysisResponse.ok)
-  //       throw new Error(`Analysis failed: ${analysisResponse.statusText}`);
-  //     const analysisData = await analysisResponse.json();
-  //     console.log("Analysis response:", analysisData);
-
-  //     // Check if result exists and doesn't contain an error or a message (which could be an error)
-  //     if (analysisData.result) {
-  //       // Don't show sidebar for error intents or when there's an error message
-  //       const isErrorResult =
-  //         analysisData.result.error ||
-  //         (analysisData.result.message && !analysisData.result.type);
-
-  //       if (!isErrorResult) {
-  //         setAnalysisResult(analysisData.result);
-  //         setShowSidebar(true);
-  //       } else {
-  //         // Still set the result for error display in chat
-  //         setAnalysisResult(analysisData.result);
-  //         // But don't show sidebar
-  //         setShowSidebar(false);
-  //       }
-  //     }
-
-  //     const chatResponse = await fetch("http://localhost:8000/chat", {
-  //       method: "POST",
-  //       headers: { "Content-Type": "application/json" },
-  //       body: JSON.stringify({
-  //         prompt,
-  //         chat_history: chatHistory,
-  //         job_id: analysisData.job_id,
-  //       }),
-  //     });
-
-  //     console.log("Chat response:", chatResponse.body);
-  //     if (!chatResponse.ok)
-  //       throw new Error(`Chat failed: ${chatResponse.statusText}`);
-  //     const reader = chatResponse.body?.getReader();
-  //     if (!reader) throw new Error("No reader");
-
-  //     let fullContent = "";
-  //     let isError = false;
-
-  //     while (true) {
-  //       const { done, value } = await reader.read();
-  //       if (done) break;
-  //       const lines = new TextDecoder().decode(value).split("\n");
-
-  //       for (const line of lines) {
-  //         if (line.startsWith("data: ")) {
-  //           const data = line.slice(6).trim();
-  //           if (data === "[DONE]") {
-  //             // Final update to set the completed assistant message
-  //             setMessages((prev) => {
-  //               const updated = [...prev];
-  //               const lastMessage = updated[updated.length - 1];
-  //               if (lastMessage?.role === "assistant") {
-  //                 updated[updated.length - 1] = {
-  //                   ...lastMessage,
-  //                   content: fullContent,
-  //                   timestamp: new Date(),
-  //                   error: isError, // Set the error flag from streamed responses
-  //                 };
-  //               }
-  //               return updated;
-  //             });
-  //             break;
-  //           }
-
-  //           try {
-  //             const parsed = JSON.parse(data);
-  //             if (parsed.content) {
-  //               fullContent += parsed.content;
-  //               setStreamContent(fullContent);
-  //             }
-  //             // Track if any part of the message was flagged as an error
-  //             if (parsed.error) {
-  //               isError = true;
-  //             }
-  //           } catch (err) {
-  //             console.error("JSON parsing error in streamed chunk:", err, line);
-  //           }
-  //         }
-  //       }
-  //     }
-  //   } catch (err: any) {
-  //     const errorMessage = `I encountered an error: ${err.message}`;
-  //     setMessages((prev) => {
-  //       const updated = [...prev];
-  //       updated[updated.length - 1] = {
-  //         role: "assistant",
-  //         content: errorMessage,
-  //         timestamp: new Date(),
-  //         error: true, // Mark as error
-  //       };
-  //       return updated;
-  //     });
-  //   } finally {
-  //     setLoading(false);
-  //     setStreamContent("");
-  //   }
-  // };
 
   const processData = async (prompt: string, attachedFile: File | null) => {
     if (!prompt.trim() && !attachedFile) return;
@@ -372,9 +217,7 @@ export default function ChatComponent() {
         if (!isErrorResult) {
           setAnalysisResult(analysisData.result);
           setShowSidebar(true);
-        } else {
-          setAnalysisResult(analysisData.result);
-          setShowSidebar(false);
+          saveResultToLocal(analysisData.result); // Save the result
         }
       }
 
@@ -482,7 +325,8 @@ export default function ChatComponent() {
       case "summary":
         return <DataSummary data={analysisResult.data} />;
       case "forecast":
-        return <ForecastResults data={analysisResult} />;
+        console.log("analyszed data", analysisResult.data);
+        return <ForecastResults data={analysisResult.data} />;
       case "predict":
         return (
           <PredictionResults
@@ -513,6 +357,13 @@ export default function ChatComponent() {
             note={analysisResult.note}
           />
         ) : null;
+      case "whatif":
+        return (
+          <WhatIfResultCard
+            value={analysisResult.data}
+            note={analysisResult.user_input}
+          />
+        );
       default:
         return (
           <div className="p-4 text-gray-500">

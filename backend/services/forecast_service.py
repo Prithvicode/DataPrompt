@@ -5,8 +5,10 @@ import os
 from datetime import datetime, timedelta
 from dateutil.relativedelta import relativedelta
 from sklearn.metrics import r2_score
+from sklearn.linear_model import LinearRegression
 import re
 import json
+import ast
 
 # Import model and set global variables
 MODEL_PATH = os.path.join(os.path.dirname(__file__), "linear_model.pkl")
@@ -93,51 +95,115 @@ def process_and_predict(df):
 
 
 def process_whatif(custom_input):
+    if isinstance(custom_input, str):
+        custom_input = ast.literal_eval(custom_input)  # Safely parse string to dict
+
     df = pd.DataFrame([custom_input])
+    print(f"[DEBUG] Custom input DataFrame in process_whatif:\n{df}")
+
     sample_encoded = pd.get_dummies(df, columns=['ProductCategory', 'ProductName', 'Region', 'CustomerSegment'])
 
-    # Ensure all required feature columns are present
     for col in feature_cols:
         if col not in sample_encoded.columns:
             sample_encoded[col] = 0
 
-    # Reorder columns to match training set
     sample_encoded = sample_encoded[feature_cols]
 
-    # Scale features
     sample_scaled = scaler.transform(sample_encoded)
-    sample_scaled = np.hstack((np.ones((sample_scaled.shape[0], 1)), sample_scaled))  # Add bias term
+    sample_scaled = np.hstack((np.ones((sample_scaled.shape[0], 1)), sample_scaled))
 
-    # Predict
     predicted_revenue = sample_scaled @ theta
     print(f"💰 Predicted Revenue: {predicted_revenue[0][0]:.2f}")
 
     return predicted_revenue[0][0]
 
-if __name__ == "__main__":
-    profit = 2059.2
-    revenue = 4254.8
-    profit_margin = profit / revenue
+def process_forecast(df, forecast_periods=3):
+    print("[DEBUG] Processing forecast...")
+    print(f"[DEBUG] Initial DataFrame:\n{df}")
+    print(f"[DEBUG] Forecast periods: {forecast_periods}")
 
-    user_prompt = json.dumps({
-        "UnitsSold": 10,
-        "UnitPrice": 425.48,
-        "CostPerUnit": 219.56,
-        "Profit": profit,
-        "PromotionApplied": 0,
-        "Holiday": 0,
-        "Temperature": 18.2,
-        "FootTraffic": 100,
-        "ProfitPerUnit": 205.92,
-        "ProfitMargin": profit_margin,
-        "ProductCategory": "Grocery",
-        "ProductName": "Cereal",
-        "Region": "East",
-        "CustomerSegment": "Online"
+    forecast_periods = max(1, forecast_periods)
+    df['Date'] = pd.to_datetime(df[['Year', 'Month']].assign(DAY=1))
+
+    # Sort chronologically
+    df.sort_values('Date', inplace=True)
+    df.reset_index(drop=True, inplace=True)
+
+    # Create a time index
+    df['TimeIndex'] = np.arange(len(df))
+
+    # Define features and target
+    X = df[['TimeIndex']]
+    y = df['Revenue']
+
+    model = LinearRegression()
+    model.fit(X, y)
+
+    # Forecast future time steps
+    last_index = df['TimeIndex'].iloc[-1]
+    future_index = np.arange(last_index + 1, last_index + forecast_periods + 1).reshape(-1, 1)
+
+    # Predict future values
+    future_revenues = model.predict(future_index)
+
+    # Generate future dates
+    last_date = df['Date'].iloc[-1]
+    # Fix: start forecast from the next month after the last date in the dataset
+    future_dates = pd.date_range(last_date + pd.DateOffset(months=1), periods=forecast_periods, freq='MS')
+
+    # Historical result: return actuals with prediction column
+    historical_df = df[['Date', 'Revenue']].copy()
+    historical_df.rename(columns={'Revenue': 'PredictedRevenue'}, inplace=True)
+    historical_df['type'] = 'historical'
+
+    # Forecast result
+    forecast_df = pd.DataFrame({
+        'Date': future_dates,
+        'PredictedRevenue': future_revenues,
+        'type': 'forecast'
     })
 
-    parsed_input = json.loads(user_prompt)
-    predicted = process_whatif(parsed_input)
-    print(predicted)
+    combined_df = pd.concat([historical_df, forecast_df], ignore_index=True)
 
+    print(f"[DEBUG] Combined DataFrame:\n{combined_df}")
+
+    return combined_df.to_dict(orient="records")
+
+
+
+
+if __name__ == "__main__":
+    user_prompt = """
+    {
+    'UnitsSold': 10,
+    'UnitPrice': 425.48,
+    'CostPerUnit': 219.56,
+    'Profit': 2059.2,
+    'PromotionApplied': 0,  
+    'Holiday': 0, 
+    'Temperature': 18.2, 
+    'FootTraffic': 100,  
+    'ProfitPerUnit': 205.92,  
+    'ProfitMargin': (2059.2 / 4254.8), 
+    'ProductCategory': 'Grocery',  
+    'ProductName': 'Cereal',  
+    'Region': 'East',  
+    'CustomerSegment': 'Online' 
+    }
+    """
+    # parsed_input = json.loads(user_prompt)
+    # predicted = process_whatif(parsed_input)
+    # print(predicted)
+        # Sample historical data for testing
+    data = {
+        'Year': [2023, 2023, 2023, 2023, 2024],
+        'Month': [10, 11, 12, 1, 2],
+        'Revenue': [10000, 12000, 13000, 12500, 13500]
+    }
+    df = pd.DataFrame(data)
+
+    historical_data, forecasted_data = process_forecast(df, forecast_periods=3)
+    combined_data = historical_data + forecasted_data
+    print(f"[DEBUG] Forecast DataFrame:\n{combined_data} ")
  
+

@@ -38,6 +38,13 @@ export default function MessageList({
         const showStreamingContent =
           isLastMessage && isAssistant && isStreaming;
 
+        if (
+          showStreamingContent &&
+          message.content === "✅ Data analyzed. Now generating explanation..."
+        ) {
+          return null;
+        }
+
         return (
           <div
             key={index}
@@ -89,17 +96,17 @@ export default function MessageList({
               {/* Message bubble */}
               <div
                 className={cn(
-                  "rounded-lg p-3",
+                  "rounded-lg p-4",
                   isUser
                     ? "bg-blue-100 ml-auto text-blue-800"
                     : message.error
                     ? "bg-red-100 border border-red-500"
-                    : "bg-gray-200 mr-auto text-gray-800"
+                    : " mr-auto text-gray-800"
                 )}
               >
                 {showStreamingContent ? (
                   <div className="flex flex-col gap-1">
-                    <div className="prose prose-sm leading-relaxed max-w-none">
+                    <div className="leading-loose max-w-none">
                       <ReactMarkdown
                         remarkPlugins={[remarkGfm]}
                         rehypePlugins={[rehypeHighlight]}
@@ -117,7 +124,7 @@ export default function MessageList({
                   message.error ? (
                     formatErrorMessage(message.content)
                   ) : (
-                    <div className="prose prose-sm max-w-none">
+                    <div className="leading-loose max-w-none">
                       <ReactMarkdown
                         remarkPlugins={[remarkGfm]}
                         rehypePlugins={[rehypeHighlight]}
