@@ -12,12 +12,13 @@ import json
 from dateutil.parser import parse as parse_date
 
 from services.nlp_service import generate_panda_code_from_prompt, classify_forecast_intent, parse_whatif_scenarios
-from services.forecast_service import process_and_predict
+from services.forecast_service import process_and_predict, process_whatif
 
 # from services.prepare_data_for_prediction import predict_sales, forecast_weekly_sales, forecast_monthly_sales
 
 OLLAMA_URL = "http://localhost:11434/api/chat"
 MODEL_NAME = "llama3.2"
+# MODEL_NAME = "phi3"
 
 class DataAnalyzer:
     def __init__(self, df: pd.DataFrame):
@@ -65,63 +66,148 @@ class DataAnalyzer:
         print(f"[DEBUG] Column metadata generated with {len(metadata)} columns")
         return result
 
-    # def generate_summary(self) -> Dict[str, Any]:
-    #     """
-    #     Generate a structured summary of the dataset.
-    #     """
-    #     print("[DEBUG] Generating dataset summary")
-    #     df = self.df
-    #     summary = {
-    #         "dataset_info": {
-    #             "rows": len(df),
-    #             "columns": len(df.columns),
-    #             "column_names": df.columns.tolist(),
-    #             "numeric_columns": self.numeric_columns,
-    #             "categorical_columns": self.categorical_columns,
-    #             "date_columns": self.date_columns,
-    #             "missing_values": df.isnull().sum().to_dict()
-    #         }
-    #     }
+    def generate_user_friendly_summary(self) -> Dict[str, Any]:
+        """
+        Generate a business-friendly summary of the dataset with easy-to-understand insights.
+        """
+        print("[INFO] Generating user-friendly dataset summary")
+        df = self.df
 
-    #     # Numeric statistics
-    #     if self.numeric_columns:
-    #         print(f"[DEBUG] Calculating statistics for {len(self.numeric_columns)} numeric columns")
-    #         summary["numeric_stats"] = df[self.numeric_columns].describe().to_dict()
+        summary = {
+            "overview": {
+                "total_records": len(df),
+                "total_columns": len(df.columns),
+                "column_names": df.columns.tolist(),
+                "missing_data": df.isnull().sum().to_dict()
+            },
+            "insights": {},
+            "visual_data": {}
+        }
 
-    #     # Categorical statistics
-    #     if self.categorical_columns:
-    #         print(f"[DEBUG] Calculating statistics for {len(self.categorical_columns)} categorical columns")
-    #         summary["categorical_stats"] = {
-    #             col: {
-    #                 "unique_values": df[col].nunique(),
-    #                 "top_values": df[col].value_counts().head(10).to_dict()
-    #             }
-    #             for col in self.categorical_columns
-    #         }
+        # 1. Business Overview Stats
+        if self.numeric_columns:
+            summary["insights"]["key_metrics"] = df[self.numeric_columns].describe().round(2).to_dict()
 
-    #     # Date statistics
-    #     if self.date_columns:
-    #         print(f"[DEBUG] Calculating statistics for {len(self.date_columns)} date columns")
-    #         date_stats = {}
-    #         for col in self.date_columns:
-    #             try:
-    #                 date_series = pd.to_datetime(df[col])
-    #                 date_stats[col] = {
-    #                     "min_date": date_series.min().isoformat(),
-    #                     "max_date": date_series.max().isoformat(),
-    #                     "range_days": (date_series.max() - date_series.min()).days
-    #                 }
-    #                 print(f"[DEBUG] Date stats for {col}: range = {date_stats[col]['range_days']} days")
-    #             except Exception as e:
-    #                 print(f"[ERROR] Error calculating date stats for {col}: {str(e)}")
-    #                 date_stats[col] = {"error": str(e)}
-    #         summary["date_stats"] = date_stats
+        # 2. Time Trends
+        if all(col in df.columns for col in ['Revenue', 'Profit', 'Month', 'Year']):
+            monthly = df.groupby(['Year', 'Month']).agg({
+                'Revenue': 'sum',
+                'Profit': 'sum',
+                'UnitsSold': 'sum'
+            }).reset_index()
+            summary["visual_data"]["monthly_performance"] = [
+                {
+                    "month": f"{int(row['Year'])}-{int(row['Month']):02d}",
+                    "revenue": round(row['Revenue'], 2),
+                    "profit": round(row['Profit'], 2),
+                    "units_sold": int(row['UnitsSold'])
+                }
+                for _, row in monthly.iterrows()
+            ]
 
-    #     print("[DEBUG] Summary generation complete")
-    #     return {
-    #         "type": "summary",
-    #         "data": summary
-    #     }
+        # 3. Best and Worst Product Categories
+        if all(col in df.columns for col in ['ProductCategory', 'Revenue', 'Profit']):
+            product_stats = df.groupby('ProductCategory').agg({
+                'Revenue': 'sum',
+                'Profit': 'sum',
+                'UnitsSold': 'sum',
+                'OrderID': 'nunique'
+            }).reset_index()
+
+            product_stats['AverageOrderValue'] = product_stats['Revenue'] / product_stats['OrderID']
+            product_stats['ProfitPerUnit'] = product_stats['Profit'] / product_stats['UnitsSold']
+
+            summary["visual_data"]["product_performance"] = [
+                {
+                    "category": row['ProductCategory'],
+                    "revenue": round(row['Revenue'], 2),
+                    "profit": round(row['Profit'], 2),
+                    "units_sold": int(row['UnitsSold']),
+                    "avg_order_value": round(row['AverageOrderValue'], 2),
+                    "profit_per_unit": round(row['ProfitPerUnit'], 2)
+                }
+                for _, row in product_stats.iterrows()
+            ]
+
+        # 4. Regional Sales Breakdown
+        if 'Region' in df.columns:
+            region_stats = df.groupby('Region').agg({
+                'Revenue': 'sum',
+                'Profit': 'sum',
+                'UnitsSold': 'sum',
+                'OrderID': 'nunique'
+            }).reset_index()
+
+            summary["visual_data"]["regional_performance"] = [
+                {
+                    "region": row['Region'],
+                    "revenue": round(row['Revenue'], 2),
+                    "profit": round(row['Profit'], 2),
+                    "units_sold": int(row['UnitsSold']),
+                    "total_orders": int(row['OrderID'])
+                }
+                for _, row in region_stats.iterrows()
+            ]
+
+        # 5. Promotions Impact
+        if 'PromotionApplied' in df.columns:
+            promo_stats = df.groupby('PromotionApplied').agg({
+                'Revenue': 'sum',
+                'Profit': 'sum',
+                'UnitsSold': 'sum',
+                'ProfitMargin': 'mean'
+            }).reset_index()
+
+            summary["visual_data"]["promotion_impact"] = [
+                {
+                    "profit": round(row['Profit'], 2),
+                    "units_sold": int(row['UnitsSold']),
+                    "average_profit_margin_percent": round(row['ProfitMargin'] * 100, 2)
+                }
+                for _, row in promo_stats.iterrows()
+            ]
+
+        # 6. Customer Segments
+        if 'CustomerSegment' in df.columns:
+            segment_stats = df.groupby('CustomerSegment').agg({
+                'Revenue': 'sum',
+                'Profit': 'sum',
+                'UnitsSold': 'sum',
+                'OrderID': 'nunique'
+            }).reset_index()
+            segment_stats['AvgRevenuePerOrder'] = segment_stats['Revenue'] / segment_stats['OrderID']
+
+            summary["visual_data"]["customer_segments"] = [
+                {
+                    "segment": row['CustomerSegment'],
+                    "revenue": round(row['Revenue'], 2),
+                    "profit": round(row['Profit'], 2),
+                    "units_sold": int(row['UnitsSold']),
+                    "avg_revenue_per_order": round(row['AvgRevenuePerOrder'], 2)
+                }
+                for _, row in segment_stats.iterrows()
+            ]
+
+        # 7. Calendar Trends
+        if 'OrderDate' in self.date_columns:
+            try:
+                df['OrderDateParsed'] = pd.to_datetime(df['OrderDate'])
+                daily_orders = df.groupby(df['OrderDateParsed'].dt.date).size().reset_index()
+                daily_orders.columns = ['date', 'orders']
+
+                summary["visual_data"]["daily_orders"] = [
+                    {"date": str(date), "orders": int(count)}
+                    for date, count in zip(daily_orders['date'], daily_orders['orders'])
+                ]
+            except Exception as e:
+                print(f"[WARNING] Couldn't parse OrderDate: {e}")
+
+        print("[INFO] Summary ready")
+        return {
+            "type": "summary",
+            "data": summary
+        }
+
     
     def generate_summary(self) -> Dict[str, Any]:
         """
@@ -792,62 +878,29 @@ class DataAnalyzer:
     
     def forecast(self, prompt: str, **parameters):
         """
-        Forecast sales based on the user's prompt and the provided parameters.
-        This method integrates with the LLM to determine what time range the user is asking for.
+        Forecast future values based on historical data.
         """
-        try:
-            print(f"[DEBUG] Forecasting with prompt: {prompt}")
-            
-            # Step 1: Classify the intent of the forecast
-            model_response = classify_forecast_intent(prompt, df_columns= self.df.columns.tolist())
-            # Parse the string response to a dictionary
-            try:
-                intentResponse = json.loads(model_response)
-            except json.JSONDecodeError as e:
-                print(f"[ERROR] Failed to parse intent response: {e}")
-                raise ValueError("Failed to parse forecast intent response as JSON.")
-
-            print(f"[DEBUG] Classified intent: {intentResponse}")
-
-            period_type = intentResponse.get("periodType", "weekly")
-            period_ahead = intentResponse.get("periods_ahead", 1)  # Default to 1 week/month if not specified
-            target_variable = intentResponse.get("target_variable", "Revenue")
-            filters = intentResponse.get("filters")
-
-            predictions = forecast_revenue(period_type=period_type, periods_ahead=period_ahead, df=self.df)
-            print(f"[DEBUG] Predictions : {predictions}")
-            
-            return {
-                "type": "forecast",
-               "data": predictions,
-            }
-
-
-            
-      
-            
-        #     # Step 3: Generate predictions based on the classified intent
-        #     predictions = {
-        #         "type": "forecast",
-        #         "intent": intent,
-        #         "data": forecast_data
-        #     }
-            
-        #     print(f"[DEBUG] Forecasting complete, predictions shape: {len(predictions['data'])}")
-            
-        except Exception as e:
-            print(f"[ERROR] Error during forecasting: {str(e)}")
-            print(f"[ERROR] Traceback: {traceback.format_exc()}")
-            return {
-                "type": "error",
-                "message": f"Error during forecasting: {str(e)}"
-            }
-       
-        # return predictions
+        print(f"[DEBUG] Forecasting with prompt: {prompt}")
+        
+        # Placeholder for actual forecasting logic
+        forecasted_data = {
+            "future_dates": [],
+            "predicted_values": []
+        }
+        
+        # Example of how to structure the response
+        return {
+            "type": "forecast",
+            "data": forecasted_data
+        }
 
     def what_if_analysis(self, prompt: str, **parameters):
         feature_input = parse_whatif_scenarios(prompt, self.df.columns.tolist())
+        
+        result =  process_whatif(feature_input)
+        
         print(f"[DEBUG] What-if analysis input: {feature_input}")
+
     
     def predict(self, prompt: str, **parameters):
         print("DEBUG] Predicting with prompt: ", prompt)

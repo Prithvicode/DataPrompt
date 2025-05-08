@@ -2,16 +2,24 @@
 
 import type React from "react";
 import { useState, useRef } from "react";
-import { Send, Paperclip, Loader2 } from "lucide-react";
+import { Send, Paperclip, Loader2, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import FileAttachment from "./FileAttachment";
+
+import {
+  TooltipProvider,
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "../ui/tooltip";
 
 interface ChatInputProps {
   onSend: (message: string, file: File | null) => void;
   loading: boolean;
   file: File | null;
   onFileChange: (file: File | null) => void;
+  onUploadFile: (file: File) => void;
 }
 
 export default function ChatInput({
@@ -19,6 +27,7 @@ export default function ChatInput({
   loading,
   file,
   onFileChange,
+  onUploadFile,
 }: ChatInputProps) {
   const [message, setMessage] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -41,7 +50,15 @@ export default function ChatInput({
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0] || null;
-    onFileChange(selectedFile);
+    if (selectedFile) {
+      if (!selectedFile.name.endsWith(".csv")) {
+        alert("Only .csv files are allowed.");
+        return;
+      } else {
+        onUploadFile(selectedFile);
+        onFileChange(selectedFile);
+      }
+    }
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
@@ -77,21 +94,29 @@ export default function ChatInput({
         />
 
         <div className="absolute right-2 bottom-2 flex gap-1">
-          <Button
-            type="button"
-            size="icon"
-            variant="ghost"
-            className="h-8 w-8 rounded-full text-gray-500 hover:bg-gray-200"
-            onClick={() => fileInputRef.current?.click()}
-            title="Attach file"
-          >
-            <Paperclip className="h-5 w-5" />
-          </Button>
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="ghost"
+                  className="h-8 w-8 rounded-full text-gray-500 hover:bg-gray-200 border-2"
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  <Plus className="h-5 w-5" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>Upload .csv file</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
 
           <Button
             type="submit"
             size="icon"
-            className="h-8 w-8 rounded-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-200 disabled:text-gray-400"
+            className="h-8 w-8  rounded-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-200 disabled:text-gray-400  "
             disabled={loading || (!message.trim() && !file)}
           >
             {loading ? (
@@ -108,7 +133,7 @@ export default function ChatInput({
         ref={fileInputRef}
         onChange={handleFileChange}
         className="hidden"
-        accept=".csv,.xlsx,.json"
+        accept=".csv"
       />
     </form>
   );

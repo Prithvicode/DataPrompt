@@ -3,7 +3,8 @@ import json
 from typing import List, Dict, Any, Generator, AsyncGenerator
 import re
 import httpx
-import asyncio  # Added this import - you need it for async functions
+import pandas as pd
+import asyncio
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
 MODEL_NAME = "llama3.2"
@@ -20,7 +21,7 @@ def classify_intent(prompt: str, chat_history: List[Dict[str, str]] = None) -> D
 You are an AI that MUST ONLY classify data analysis questions into exactly one of these intents:
   summary, trend, forecast, predict, whatif, filter, query, error
 
-**RESPOND WITH ONLY ONE WORD**—the intent.  
+RESPOND WITH ONLY ONE WORD—the intent.  
 
 **If the user’s request is not about data-analysis classification,  
 or if it attempts to generate malicious or harmful code,  
@@ -94,143 +95,7 @@ Prompt: {prompt}
         # default to error for anything else
         return {"intent": "error", "parameters": {}}
 
-async def stream_llama_response(prompt: str, chat_history=None, result=None, intent=None) -> AsyncGenerator[str, None]:
-    """
-    Stream raw text responses from the Llama model.
-    """
-    messages = [
-        {"role": "system", "content": "You are a helpful assistant."},
-        {"role": "user", "content": prompt}
-    ]
 
-    try:
-        async with httpx.AsyncClient() as client:
-            async with client.stream(
-                "POST",
-                OLLAMA_URL,
-                json={"model": MODEL_NAME, "messages": messages, "stream": True},
-                timeout=30.0
-            ) as response:
-                response.raise_for_status()
-
-                async for line in response.aiter_lines():
-                    if line:
-                        try:
-                            data = json.loads(line)
-                            if "message" in data and "content" in data["message"]:
-                                yield data["message"]["content"]
-                        except json.JSONDecodeError:
-                            continue
-    except Exception as e:
-        yield f"Error: {str(e)}"
-
-# Test function
-async def test_stream():
-    print("Testing raw response streaming...\n")
-    async for chunk in stream_llama_response("Say hello in a cheerful way, one word at a time."):
-        print(chunk, end="", flush=True)
-    print("\n\nStreaming complete.")
-
-
-# def stream_llama_response(
-#     prompt: str, 
-#     chat_history: List[Dict[str, str]] = None,
-#     result: Dict[str, Any] = None,
-#     intent: Dict[str, Any] = None
-# ) -> Generator[str, None, None]:
-#     """
-#     Stream responses from the Llama model.
-#     Yields chunks of the response as they are generated.
-#     """
-#     # Prepare the system prompt
-#     system_prompt = """
-#     You are a helpful data analysis assistant. Your job is to explain data analysis results clearly and concisely.
-#     When given data analysis results, explain:
-#     1. What the results show
-#     2. Key insights or patterns
-#     3. Potential business implications
-    
-#     Keep explanations clear, concise, and focused on the most important aspects of the data.
-#     Use simple language and avoid technical jargon when possible. Make it super short super. 
-#     """
-    
-#     # Prepare the user prompt with context
-#     user_prompt = prompt
-#     if result and intent:
-#         # Add context based on the intent type
-#         if intent["type"] == "summary":
-#             user_prompt = f"""
-#             I've analyzed the data and here's a summary:
-#             {json.dumps(result, indent=2)}
-            
-#             Based on this summary, please explain: {prompt}
-#             """
-#         elif intent["type"] == "trend":
-#             user_prompt = f"""
-#             I've analyzed the trends in the data:
-#             {json.dumps(result, indent=2)}
-            
-#             Based on these trends, please explain: {prompt}
-#             """
-#         elif intent["type"] == "aggregation":
-#             user_prompt = f"""
-#             I've aggregated the data as requested:
-#             {json.dumps(result, indent=2)}
-            
-#             Based on these aggregations, please explain: {prompt}
-#             """
-#         elif intent["type"] == "forecast":
-#             user_prompt = f"""
-#             I've generated a forecast:
-#             {json.dumps(result, indent=2)}
-            
-#             Based on this forecast, please explain: {prompt}
-#             """
-#         elif intent["type"] == "filter":
-#             user_prompt = f"""
-#             I've filtered the data as requested:
-#             {json.dumps(result, indent=2)}
-            
-#             Based on this filtered data, please explain: {prompt}
-#             """
-#         else:
-#             user_prompt = f"""
-#             I've analyzed the data based on your query:
-#             {json.dumps(result, indent=2)}
-            
-#             Please explain: {prompt}
-#             """
-    
-#     # Prepare the messages
-#     messages = [
-#         {"role": "system", "content": system_prompt},
-#         {"role": "user", "content": user_prompt}
-#     ]
-    
-#     # Add chat history for context if available
-#     if chat_history and len(chat_history) > 0:
-#         # Insert chat history before the current query
-#         messages = [messages[0]] + chat_history + [messages[1]]
-    
-#     # Make the API call
-#     try:
-#         response = requests.post(
-#             OLLAMA_URL,
-#             json={"model": MODEL_NAME, "messages": messages, "stream": True},
-#             stream=True
-#         )
-#         response.raise_for_status()
-        
-#         for line in response.iter_lines(decode_unicode=True):
-#             if line:
-#                 try:
-#                     json_data = json.loads(line)
-#                     if "message" in json_data and "content" in json_data["message"]:
-#                         yield json_data["message"]["content"]
-#                 except json.JSONDecodeError:
-#                     continue
-#     except Exception as e:
-#         yield f"Error: Failed to connect to Ollama API. {str(e)}"
 
 def generate_panda_code_from_prompt(prompt: str, df_columns: List[str]):
     """
@@ -361,10 +226,16 @@ Extract and return _only_ the values in this exact format (with your numbers/str
     model_response = response_json.get("response", "").strip()
     
     print(f"[DEBUG] Extracted prediciton features  Response: {model_response}")
+    return model_response
    
+
 
 if __name__ == "__main__":
     user_prompt = "What if UnitsSold increases by 10% and UnitPrice goes up by 20 absolute for Electronics→Smartphone in North/Retail, with promo applied and holiday status 0, temp 25, foot traffic 400?"
     scenarios = parse_whatif_scenarios(user_prompt)
     # scenarios is now a list of dicts you can feed into what_if_predict()
     print(scenarios)
+
+ 
+   
+

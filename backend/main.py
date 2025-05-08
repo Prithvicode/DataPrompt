@@ -13,9 +13,12 @@ from pydantic import BaseModel
 import numpy as np
 # Import services
 from services.file_service import save_file, get_dataset, list_datasets
-from services.nlp_service import classify_intent, stream_llama_response
+from services.nlp_service import classify_intent
 from services.data_service import DataAnalyzer
-from services.visualization_service import create_visualization
+import aiohttp
+
+import requests
+
 
 
 # In-memory storage for datasets and analysis jobs
@@ -132,6 +135,9 @@ async def upload_file(file: UploadFile = File(...)):
         # Reset file pointer and close
         await file.seek(0)
         await file.close()
+@app.get("/test")
+async def test():
+    return {"message": "Hello, World!"}
 
 @app.get("/datasets")
 async def list_datasets():
@@ -220,6 +226,7 @@ async def analyze_data(request: AnalyzeRequest, background_tasks: BackgroundTask
         # Handle valid intents
         if intent == "summary":
             result = analyzer.generate_summary()
+            # result = analyzer.generate_user_friendly_summary()
 
         elif intent == "query":
             result = analyzer.execute_query(request.prompt, df.columns.tolist())
@@ -264,159 +271,56 @@ async def analyze_data(request: AnalyzeRequest, background_tasks: BackgroundTask
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# async def generate_chat_response(prompt: str, job_id: Optional[str] = None):
-#     """
-#     Generate a streaming chat response.
-#     """
-#     job_info = None
-#     if job_id and job_id in analysis_jobs:
-#         job_info = analysis_jobs[job_id]
-
-#     def format_data(content: str):
-#         return f"data: {json.dumps({'content': content})}\n\n"
-
-#     if job_info and job_info["result"]:
-#         result = job_info["result"]
-#         if isinstance(result, dict) and "error" in result:
-#             yield format_data(f"I encountered an error: {result['error']}")
-#             await asyncio.sleep(0.5)
-#         else:
-#             # Only send the greeting if there’s no error
-#             yield format_data("I've analyzed your data.")
-#             await asyncio.sleep(0.5)
-
-#         # Check the type of result before accessing it
-#         if isinstance(result, dict) and "type" in result:
-#             if result["type"] == "summary":
-#                 data_info = result["data"]["dataset_info"]
-#                 yield format_data(f"Your dataset has {data_info['rows']} rows and {data_info['columns']} columns.")
-#                 await asyncio.sleep(0.5)
-
-#                 yield format_data(f"The columns are: {', '.join(data_info['column_names'][:5])}...")
-#                 await asyncio.sleep(0.5)
-
-#                 missing_values = sum(data_info['missing_values'].values())
-#                 if missing_values > 0:
-#                     yield format_data(f"There are {missing_values} missing values in the dataset.")
-#                     await asyncio.sleep(0.5)
-            
-#             elif result["type"] == "predict":
-#                 prediction_data = result["data"]
-#                 target = result.get("target", "value")
-#                 # The fix is here - yield the formatted chunks instead of printing them
-#                 yield format_data(f"I predicted revenues.")
-                   
-
-#         elif isinstance(result, list):
-#             # Handle the case when result is a list (like DataFrame records)
-#             records_count = len(result)
-#             yield format_data(f"I found {records_count} matching records in your dataset.")
-#             await asyncio.sleep(0.5)
-            
-#             # Optionally show a preview of the first few records
-#             if records_count > 0:
-#                 yield format_data("Here's a sample of what I found:")
-#                 await asyncio.sleep(0.5)
-                
-#                 # Show first 3 records or fewer if less are available
-#                 sample_size = min(3, records_count)
-#                 for i in range(sample_size):
-#                     yield format_data(f"Record {i+1}: {str(result[i])}")
-#                     await asyncio.sleep(0.3)
-#         elif isinstance(result, dict) and "message" in result:
-#             # Handle message-only results
-#             yield format_data(result["message"])
-#             await asyncio.sleep(0.5)
-#         elif isinstance(result, dict) and "error" in result:
-#             # Handle error results
-#             yield format_data(f"I encountered an error: {result['error']}")
-#             await asyncio.sleep(0.5)
-#         else:
-#             # Generic fallback for other result types
-#             yield format_data(f"Analysis complete. Result type: {type(result).__name__}")
-#             await asyncio.sleep(0.5)
-
-#     # yield format_data("You can ask me more specific questions about this data if you'd like.")
-#     # await asyncio.sleep(0.5)
-
-#     # Signal the end
-#     yield "data: [DONE]\n\n"
-
 async def generate_chat_response(prompt: str, job_id: Optional[str] = None):
-    """
-    Generate a streaming chat response.
-    """
-    job_info = None
-    if job_id and job_id in analysis_jobs:
-        job_info = analysis_jobs[job_id]
+    job_info = analysis_jobs.get(job_id)
     
     def format_data(content: str, error: bool = False):
         return f"data: {json.dumps({'content': content, 'error': error})}\n\n"
     
     if job_info and job_info["result"]:
         result = job_info["result"]
-        
-        # Check if this is an error message from intent classification
-        if isinstance(result, dict) and "message" in result and job_info.get("intent") == "error":
-            # Send error message with error flag set to True
+
+        if job_info.get("intent") == "error":
             yield format_data(result["message"], error=True)
-            await asyncio.sleep(0.5)
-            yield "data: [DONE]\n\n"
+            await asyncio.sleep(0.1)
+            yield format_data("[DONE]")
             return
         
-        elif isinstance(result, dict) and "error" in result:
-            # Handle other errors with error flag set to True
-            yield format_data(f"I encountered an error: {result['error']}", error=True)
-            await asyncio.sleep(0.5)
-        else:
-            # Only send the greeting if there's no error
-            yield format_data("I've analyzed your data.")
-            await asyncio.sleep(0.5)
-            
-            # Check the type of result before accessing it
-            if isinstance(result, dict) and "type" in result:
-                if result["type"] == "summary":
-                    data_info = result["data"]["dataset_info"]
-                    yield format_data(f"Your dataset has {data_info['rows']} rows and {data_info['columns']} columns.")
-                    await asyncio.sleep(0.5)
-                    
-                    yield format_data(f"The columns are: {', '.join(data_info['column_names'][:5])}...")
-                    await asyncio.sleep(0.5)
-                    
-                    missing_values = sum(data_info['missing_values'].values())
-                    if missing_values > 0:
-                        yield format_data(f"There are {missing_values} missing values in the dataset.")
-                        await asyncio.sleep(0.5)
-                
-                elif result["type"] == "predict":
-                    prediction_data = result["data"]
-                    target = result.get("target", "value")
-                    # Yield the formatted chunks instead of printing them
-                    yield format_data(f"I predicted revenues.")
-            
-            elif isinstance(result, list):
-                # Handle the case when result is a list (like DataFrame records)
-                records_count = len(result)
-                yield format_data(f"I found {records_count} matching records in your dataset.")
-                await asyncio.sleep(0.5)
-                
-                # Optionally show a preview of the first few records
-                if records_count > 0:
-                    yield format_data("Here's a sample of what I found:")
-                    await asyncio.sleep(0.5)
-                    
-                    # Show first 3 records or fewer if less are available
-                    sample_size = min(3, records_count)
-                    for i in range(sample_size):
-                        yield format_data(f"Record {i+1}: {str(result[i])}")
-                        await asyncio.sleep(0.3)
-            elif isinstance(result, dict) and "message" in result:
-                # Handle message-only results
-                yield format_data(result["message"])
-                await asyncio.sleep(0.5)
+        yield format_data("✅ Data analyzed. Now generating explanation...")
+        await asyncio.sleep(0.1)
+
+        if isinstance(result, pd.DataFrame):
+            result = json.dumps(result.to_dict(orient="records"), indent=2)
+
+        llama_prompt = f"Explain the following analysis result in simple terms: {result}"
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    OLLAMA_URL,
+                    json={"model": MODEL_NAME, "prompt": llama_prompt, "stream": True},
+                ) as response:
+                    if response.status == 200:
+                        async for line in response.content:
+                            if line:
+                                chunk = json.loads(line.decode())
+                                if content := chunk.get("response", ""):
+                                    yield format_data(content)
+                                if chunk.get("done", False):
+                                    break
+                        yield format_data("[DONE]")
+                    else:
+                        yield format_data(f"LLM Error: {response.status}", error=True)
+        except Exception as e:
+            yield format_data(f"Connection Error: {str(e)}", error=True)
+    else:
+        yield format_data("No analysis result available", error=True)
     
-    # Signal the end
-    yield "data: [DONE]\n\n"
+    yield format_data("[DONE]")
+OLLAMA_URL = "http://localhost:11434/api/generate"
+MODEL_NAME = "llama3.2"
+
+
 @app.post("/chat")
 async def chat(request: ChatRequest):
     """
@@ -424,8 +328,53 @@ async def chat(request: ChatRequest):
     """
     return StreamingResponse(
         generate_chat_response(request.prompt, request.job_id),
+        # generate_llama_response(request.prompt),
         media_type="text/event-stream"
     )
+
+# ============== Test
+def generate_llama_response(prompt: str):
+    sample_df = pd.DataFrame({
+        "Product": ["Widget A", "Widget B", "Widget C"],
+        "UnitsSold": [120, 85, 60],
+        "Revenue": [2400.0, 1700.0, 1200.0],
+        "Profit": [600.0, 450.0, 300.0],
+        "Region": ["North", "South", "West"]
+    })
+
+    # Convert the DataFrame to a readable markdown table or CSV-style string
+    table_str = json.dumps(sample_df.to_dict(orient="records"), indent=2)
+
+    full_prompt = (
+        "Explain the following analysis result in simple terms:\n\n"
+        f"{table_str}\n\n"
+        f"{prompt.strip()}"
+    )
+    payload = {
+        "model": MODEL_NAME,
+        "prompt": full_prompt,
+        "result": sample_df.to_dict(orient='records')  # Convert DataFrame to list of dicts
+    }
+
+    try:
+        # Make a synchronous POST request to the LLaMA API
+        response = requests.post(OLLAMA_URL, json=payload, stream=True)
+        print("Response from LLaMA:", response.text)
+        # Check for successful response
+        if response.status_code == 200:
+            for chunk in response.iter_lines():
+                if chunk:
+                    yield f"data: {chunk.decode('utf-8')}\n\n"
+        else:
+            yield f"data: [Error {response.status_code}: Failed to get response from LLaMA]\n\n"
+
+    except requests.RequestException as e:
+        yield f"data: [Error: {str(e)}]\n\n"
+        
+# Test simple streaming response
+@app.post("/stream")
+def stream(prompt: str):
+    return StreamingResponse(generate_llama_response(prompt), media_type="text/event-stream")
 
 if __name__ == "__main__":
     import uvicorn

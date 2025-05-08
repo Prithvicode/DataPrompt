@@ -3,6 +3,12 @@ import { cn } from "@/lib/utils";
 import { User, Bot } from "lucide-react";
 import FileAttachment from "./FileAttachment";
 import { Loader } from "../Loader";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import rehypeHighlight from "rehype-highlight";
+import "highlight.js/styles/github.css";
+
+import markdownComponents from "./MarkDownComponent";
 
 interface MessageListProps {
   messages: Message[];
@@ -17,7 +23,7 @@ export default function MessageList({
 }: MessageListProps) {
   const formatErrorMessage = (content: string) => {
     return (
-      <div className=" rounded-md p-3 text-red-700 whitespace-pre-wrap">
+      <div className="rounded-md p-3 text-red-700 whitespace-pre-wrap">
         {content}
       </div>
     );
@@ -73,7 +79,7 @@ export default function MessageList({
                 {isAssistant ? "DataPrompt" : "You"}
               </div>
 
-              {/* File attachment if present */}
+              {/* File attachment */}
               {message.file && (
                 <div className={cn(isUser ? "ml-auto" : "mr-auto")}>
                   <FileAttachment file={message.file} showRemove={false} />
@@ -93,27 +99,40 @@ export default function MessageList({
               >
                 {showStreamingContent ? (
                   <div className="flex flex-col gap-1">
-                    <span>{streamContent}</span>
+                    <div className="prose prose-sm leading-relaxed max-w-none">
+                      <ReactMarkdown
+                        remarkPlugins={[remarkGfm]}
+                        rehypePlugins={[rehypeHighlight]}
+                        components={markdownComponents}
+                      >
+                        {streamContent}
+                      </ReactMarkdown>
+                    </div>
                     <div className="flex justify-end items-center gap-2">
                       <span className="text-sm text-gray-600">Thinking</span>
                       <span className="h-2 w-2 rounded-full bg-gray-400 animate-ping" />
                     </div>
                   </div>
                 ) : typeof message.content === "string" ? (
-                  // Use the error property to determine if it should be formatted as an error
                   message.error ? (
                     formatErrorMessage(message.content)
                   ) : (
-                    <span className="whitespace-pre-wrap">
-                      {message.content}
-                    </span>
+                    <div className="prose prose-sm max-w-none">
+                      <ReactMarkdown
+                        remarkPlugins={[remarkGfm]}
+                        rehypePlugins={[rehypeHighlight]}
+                        components={markdownComponents}
+                      >
+                        {message.content}
+                      </ReactMarkdown>
+                    </div>
                   )
                 ) : (
                   <span>{message.content}</span>
                 )}
               </div>
 
-              {/* Loader when streaming */}
+              {/* Loader */}
               {isStreaming && isAssistant && isLastMessage && (
                 <Loader loading={isStreaming} />
               )}
