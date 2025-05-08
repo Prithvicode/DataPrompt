@@ -1,145 +1,118 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { LineChart } from "recharts";
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+} from "recharts";
 
 interface ForecastResultsProps {
   data: any;
 }
 
 export default function ForecastResults({ data }: ForecastResultsProps) {
-  // Handle different data formats from the backend
-  const chartData = data.data || [];
-  const metrics = data.metrics || {};
-  const title = data.target_column
+  const chartData = data || [];
+  const title = data?.target_column
     ? `Forecast for ${data.target_column}`
-    : "Forecast Results";
-  const plots = data.plots || {};
-
-  // If we have a base64 plot from the backend, display it
-  if (plots.forecast) {
-    return (
-      <Card>
-        <CardHeader>
-          <CardTitle>{title}</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <img
-            src={`data:image/png;base64,${plots.forecast}`}
-            alt="Forecast plot"
-            className="w-full rounded-md"
-          />
-          {Object.keys(metrics).length > 0 && (
-            <div className="mt-4 grid grid-cols-2 gap-2">
-              {metrics.r2 !== undefined && (
-                <div className="bg-gray-800 p-3 rounded-md">
-                  <div className="text-sm text-gray-400">R² Score</div>
-                  <div className="text-lg font-semibold">
-                    {(metrics.r2 * 100).toFixed(1)}%
-                  </div>
-                </div>
-              )}
-              {metrics.mse !== undefined && (
-                <div className="bg-gray-800 p-3 rounded-md">
-                  <div className="text-sm text-gray-400">
-                    Mean Squared Error
-                  </div>
-                  <div className="text-lg font-semibold">
-                    {metrics.mse.toFixed(2)}
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-    );
-  }
-
-  // If we have a visualization spec from the backend, use it
-  if (data.visualization && data.visualization.type === "line") {
-    const { x, y, data: vizData } = data.visualization;
-
-    return (
-      <Card>
-        <CardHeader>
-          <CardTitle>{data.visualization.title || title}</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="h-[300px]">
-            {/* <LineChart
-              data={vizData}
-              index={x}
-              categories={[y]}
-              colors={["blue"]}
-              valueFormatter={(value) => value.toFixed(2)}
-              showLegend={false}
-              showGridLines={false}
-            /> */}
-          </div>
-          {Object.keys(metrics).length > 0 && (
-            <div className="mt-4 grid grid-cols-2 gap-2">
-              {metrics.r2 !== undefined && (
-                <div className="bg-gray-800 p-3 rounded-md">
-                  <div className="text-sm text-gray-400">R² Score</div>
-                  <div className="text-lg font-semibold">
-                    {(metrics.r2 * 100).toFixed(1)}%
-                  </div>
-                </div>
-              )}
-              {metrics.mse !== undefined && (
-                <div className="bg-gray-800 p-3 rounded-md">
-                  <div className="text-sm text-gray-400">
-                    Mean Squared Error
-                  </div>
-                  <div className="text-lg font-semibold">
-                    {metrics.mse.toFixed(2)}
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-    );
-  }
-
-  // Fallback to a simple line chart with the data we have
+    : "Forecast Resultsss";
+  const historicalData = chartData.filter((d: any) => d.type === "historical");
+  const forecastData = chartData.filter((d: any) => d.type === "forecast");
+  // Merge sorted data for x-axis continuity
+  const combinedData = [...historicalData, ...forecastData].sort(
+    (a, b) => new Date(a.Date).getTime() - new Date(b.Date).getTime()
+  );
   return (
-    <Card>
+    <Card className="bg-white text-gray-900 shadow-sm">
       <CardHeader>
-        <CardTitle>{title}</CardTitle>
+        <CardTitle className="text-lg font-semibold">{title}</CardTitle>
       </CardHeader>
-      <CardContent>
-        <div className="h-[300px]">
-          {/* <LineChart
-            data={chartData}
-            index="period" // Assuming the data has a period field
-            categories={["value"]} // Assuming the data has a value field
-            colors={["blue"]}
-            valueFormatter={(value) => value.toFixed(2)}
-            showLegend={false}
-            showGridLines={false}
-          /> */}
+      <CardContent className="pr-4">
+        <div className="h-[300px] -mr-4">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart
+              data={combinedData}
+              margin={{ top: 20, right: 50, bottom: 40, left: 50 }}
+            >
+              <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+              <XAxis
+                dataKey="Date"
+                stroke="#6b7280"
+                tickFormatter={(str) =>
+                  new Date(str).toLocaleDateString("en-US", {
+                    month: "short",
+                    year: "2-digit",
+                  })
+                }
+                label={{
+                  value: "Date",
+                  position: "insideBottom",
+                  offset: -5,
+                  fill: "#6b7280",
+                }}
+              />
+              <YAxis
+                stroke="#6b7280"
+                tickFormatter={(val) => `${val.toFixed(0)}`}
+                label={{
+                  value: data?.target_column || "Revenue",
+                  angle: -90,
+                  position: "insideLeft",
+                  fill: "#6b7280",
+                  offset: -5,
+                }}
+              />
+              <Tooltip
+                contentStyle={{
+                  backgroundColor: "#f9fafb",
+                  borderColor: "#d1d5db",
+                  borderRadius: "0.5rem",
+                  boxShadow: "0 2px 10px rgba(0,0,0,0.05)",
+                }}
+                labelStyle={{
+                  color: "#111827",
+                  fontWeight: "500",
+                }}
+                itemStyle={{
+                  color: "#1f2937",
+                }}
+                labelFormatter={(label) =>
+                  new Date(label).toLocaleDateString("en-US", {
+                    month: "long",
+                    year: "numeric",
+                  })
+                }
+                formatter={(value: number) => [
+                  `Nrs.${value.toFixed(2)}`,
+                  data?.target_column || "Revenue",
+                ]}
+              />
+              <Line
+                type="monotone"
+                dataKey={(d) =>
+                  d.type === "historical" ? d.PredictedRevenue : null
+                }
+                stroke="#10b981"
+                strokeWidth={2}
+                dot={{ r: 3 }}
+                name="Historical"
+              />
+
+              <Line
+                type="monotone"
+                dataKey={(d) =>
+                  d.type === "forecast" ? d.PredictedRevenue : null
+                }
+                stroke="#f59e0b"
+                strokeWidth={2}
+                dot={{ r: 3 }}
+                name="Forecast"
+              />
+            </LineChart>
+          </ResponsiveContainer>
         </div>
-        {Object.keys(metrics).length > 0 && (
-          <div className="mt-4 grid grid-cols-2 gap-2">
-            {metrics.r2 !== undefined && (
-              <div className="bg-gray-800 p-3 rounded-md">
-                <div className="text-sm text-gray-400">R² Score</div>
-                <div className="text-lg font-semibold">
-                  {(metrics.r2 * 100).toFixed(1)}%
-                </div>
-              </div>
-            )}
-            {metrics.mse !== undefined && (
-              <div className="bg-gray-800 p-3 rounded-md">
-                <div className="text-sm text-gray-400">Mean Squared Error</div>
-                <div className="text-lg font-semibold">
-                  {metrics.mse.toFixed(2)}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
       </CardContent>
     </Card>
   );

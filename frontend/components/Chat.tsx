@@ -23,6 +23,7 @@ import { SuggestionGrid } from "./SuggestionGrid";
 import PredictionResults from "./chat/PredictResults";
 import { Loader } from "./Loader";
 import QueryResultCard from "./chat/QueryResultCard";
+import WhatIfResultCard from "./chat/WhatifResultCard";
 
 export default function ChatComponent() {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -37,6 +38,15 @@ export default function ChatComponent() {
   const [activeDatasetId, setActiveDatasetId] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | undefined>(undefined);
+  const [uploadedDatasetId, setUploadedDatasetId] = useState<string | null>(
+    null
+  );
+  const [cachedResults, setCachedResults] = useState<any[]>([]);
+
+  useEffect(() => {
+    const stored = JSON.parse(localStorage.getItem("cachedResults") || "[]");
+    setCachedResults(stored);
+  }, []);
 
   useEffect(() => {
     document.body.style.overflow = "hidden";
@@ -52,6 +62,21 @@ export default function ChatComponent() {
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
+
+  // Cache results in local storage
+  const saveResultToLocal = (result: AnalysisResult) => {
+    const existing = JSON.parse(localStorage.getItem("cachedResults") || "[]");
+    const newResult = {
+      id: Date.now(), // unique ID based on timestamp
+      timestamp: new Date(),
+      type: result.type,
+      result,
+    };
+    localStorage.setItem(
+      "cachedResults",
+      JSON.stringify([newResult, ...existing])
+    );
   };
 
   const fetchDatasetsData = async () => {
@@ -85,21 +110,21 @@ export default function ChatComponent() {
         body: formData,
       });
 
-      if (!response.ok) {
+      if (!response.ok)
         throw new Error(`Upload failed: ${response.statusText}`);
-      }
 
       const data = await response.json();
-      setActiveDatasetId(data.id);
+      setUploadedDatasetId(data.id); // Store dataset ID for later use
+      setActiveDatasetId(data.id); // Also activate it
 
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          content: `File "${data.filename}" uploaded successfully. You can now ask questions about this data.`,
-          timestamp: new Date(),
-        },
-      ]);
+      // setMessages((prev) => [
+      //   ...prev,
+      //   {
+      //     role: "assistant",
+      //     content: `File "${data.filename}" uploaded successfully. You can now ask questions about this data.`,
+      //     timestamp: new Date(),
+      //   },
+      // ]);
 
       fetchDatasetsData();
       return data.id;
@@ -116,7 +141,6 @@ export default function ChatComponent() {
           error: true,
         },
       ]);
-
       return null;
     } finally {
       setLoading(false);
@@ -146,26 +170,16 @@ export default function ChatComponent() {
     setStreamContent("");
     setAnalysisResult(null);
 
-    let datasetId = activeDatasetId;
-    if (attachedFile) {
-      datasetId = await uploadFile(attachedFile);
-      setFile(null);
-    }
-
+    let datasetId = uploadedDatasetId || activeDatasetId;
     if (!datasetId) {
-      if (!attachedFile) {
-        setMessages((prev) => [
-          ...prev,
-          {
-            role: "assistant",
-            content:
-              "Please upload a file first or select a dataset to analyze.",
-            timestamp: new Date(),
-          },
-        ]);
-        setLoading(false);
-        return;
-      }
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          content: "Please upload a file first or select a dataset to analyze.",
+          timestamp: new Date(),
+        },
+      ]);
       setLoading(false);
       return;
     }
@@ -195,9 +209,7 @@ export default function ChatComponent() {
       const analysisData = await analysisResponse.json();
       console.log("Analysis response:", analysisData);
 
-      // Check if result exists and doesn't contain an error or a message (which could be an error)
       if (analysisData.result) {
-        // Don't show sidebar for error intents or when there's an error message
         const isErrorResult =
           analysisData.result.error ||
           (analysisData.result.message && !analysisData.result.type);
@@ -205,11 +217,7 @@ export default function ChatComponent() {
         if (!isErrorResult) {
           setAnalysisResult(analysisData.result);
           setShowSidebar(true);
-        } else {
-          // Still set the result for error display in chat
-          setAnalysisResult(analysisData.result);
-          // But don't show sidebar
-          setShowSidebar(false);
+          saveResultToLocal(analysisData.result); // Save the result
         }
       }
 
@@ -240,30 +248,33 @@ export default function ChatComponent() {
         for (const line of lines) {
           if (line.startsWith("data: ")) {
             const data = line.slice(6).trim();
-            if (data === "[DONE]") {
-              // Final update to set the completed assistant message
-              setMessages((prev) => {
-                const updated = [...prev];
-                const lastMessage = updated[updated.length - 1];
-                if (lastMessage?.role === "assistant") {
-                  updated[updated.length - 1] = {
-                    ...lastMessage,
-                    content: fullContent,
-                    timestamp: new Date(),
-                    error: isError, // Set the error flag from streamed responses
-                  };
-                }
-                return updated;
-              });
-              break;
-            }
 
             try {
               const parsed = JSON.parse(data);
+
+              if (parsed.content === "[DONE]") {
+                // Final update to set the completed assistant message
+                setMessages((prev) => {
+                  const updated = [...prev];
+                  const lastMessage = updated[updated.length - 1];
+                  if (lastMessage?.role === "assistant") {
+                    updated[updated.length - 1] = {
+                      ...lastMessage,
+                      content: fullContent,
+                      timestamp: new Date(),
+                      error: isError, // Set the error flag from streamed responses
+                    };
+                  }
+                  return updated;
+                });
+                break;
+              }
+
               if (parsed.content) {
                 fullContent += parsed.content;
                 setStreamContent(fullContent);
               }
+
               // Track if any part of the message was flagged as an error
               if (parsed.error) {
                 isError = true;
@@ -291,6 +302,7 @@ export default function ChatComponent() {
       setStreamContent("");
     }
   };
+
   const handleDatasetSelect = (datasetId: string) => {
     setActiveDatasetId(datasetId);
     const dataset = datasets.find((d) => d.id === datasetId);
@@ -313,7 +325,8 @@ export default function ChatComponent() {
       case "summary":
         return <DataSummary data={analysisResult.data} />;
       case "forecast":
-        return <ForecastResults data={analysisResult} />;
+        console.log("analyszed data", analysisResult.data);
+        return <ForecastResults data={analysisResult.data} />;
       case "predict":
         return (
           <PredictionResults
@@ -344,6 +357,13 @@ export default function ChatComponent() {
             note={analysisResult.note}
           />
         ) : null;
+      case "whatif":
+        return (
+          <WhatIfResultCard
+            value={analysisResult.data}
+            note={analysisResult.user_input}
+          />
+        );
       default:
         return (
           <div className="p-4 text-gray-500">
@@ -403,6 +423,7 @@ export default function ChatComponent() {
             action={
               <>
                 <ChatInput
+                  onUploadFile={uploadFile}
                   onSend={processData}
                   loading={loading}
                   file={file}
@@ -432,6 +453,7 @@ export default function ChatComponent() {
 
             <div className="p-6 bg-gray-100">
               <ChatInput
+                onUploadFile={uploadFile}
                 onSend={processData}
                 loading={loading}
                 file={file}
