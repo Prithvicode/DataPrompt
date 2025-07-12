@@ -20,7 +20,12 @@ from services.forecast_service import process_and_predict, process_whatif, proce
 
 OLLAMA_URL = "http://localhost:11434/api/chat"
 MODEL_NAME = "llama3.2"
+# MODEL_NAME = "llama3.2:1b"
 # MODEL_NAME = "phi3"
+# MODEL_NAME = "qwen2.5:1.5b"
+# MODEL_NAME = "qwen2.5:0.5b"
+
+
 
 class DataAnalyzer:
     def __init__(self, df: pd.DataFrame):
@@ -77,10 +82,12 @@ class DataAnalyzer:
 
         summary = {
             "overview": {
-                "total_records": len(df),
-                "total_columns": len(df.columns),
-                "column_names": df.columns.tolist(),
-                "missing_data": df.isnull().sum().to_dict()
+                    "total_records": len(df),
+                    "total_columns": len(df.columns),
+                    "column_names": df.columns.tolist(),
+                    "data_types": df.dtypes.astype(str).to_dict(),
+                    "missing_data": df.isnull().sum().to_dict(),
+                    "duplicate_records": int(df.duplicated().sum())
             },
             "insights": {},
             "visual_data": {}
@@ -204,7 +211,7 @@ class DataAnalyzer:
             except Exception as e:
                 print(f"[WARNING] Couldn't parse OrderDate: {e}")
 
-        print("[INFO] Summary ready")
+        print("[INFO] Summary ready: ", summary)
         return {
             "type": "summary",
             "data": summary
@@ -523,6 +530,10 @@ class DataAnalyzer:
         3. For filtering by condition, use: df = df[df['column_name'] > value]
         4. Always check if the columns you're using exist in the dataframe
         5. Return ONLY executable pandas code without explanations
+- Do not include import statements, variable assignments, comments, explanations, or markdown formatting.
+- Do not wrap the response in ```python``` or any other formatting.
+- Return only the **raw, executable** pandas code (ideally one line, unless absolutely necessary).
+
         """
         
         code = generate_panda_code_from_prompt(augmented_prompt, df_columns)
@@ -932,8 +943,25 @@ if __name__ == "__main__":
 
     user_prompt2 = """ What if UnitsSold is 10 and UnitPrice is 425.48 for Grocery → Cereal in the East region, with promotion not applied, holiday status 0, temperature 18.2°C, and foot traffic 100? """
 
+    user_promp3 ="""What if UnitsSold increases by 10% and UnitPrice increases by ₹20, for the product category Electronics, product name Smartphone, in the North region and Retail customer segment, with the following conditions: Base UnitsSold: 1,000 → New UnitsSold: 1,100 Base UnitPrice: ₹425.48 → New UnitPrice: ₹445.48 CostPerUnit: ₹300.00 PromotionApplied: 1 Holiday: 0 Temperature: 25°C FootTraffic: 400 ProductCategory: "Electronics" ProductName: "Smartphone" Region: "North" CustomerSegment: "Retail"""
     forecast_prompt ="""forecast revenue for next 12 months"""
-    da = DataAnalyzer()
+    da = DataAnalyzer(df=pd.DataFrame({
+        "ProductCategory": ["Electronics", "Grocery", "Electronics", "Grocery"],
+        "ProductName": ["Smartphone", "Cereal", "Laptop", "Milk"],
+        "Region": ["North", "East", "North", "West"],
+        "CustomerSegment": ["Retail", "Wholesale", "Retail", "Wholesale"],
+        "UnitsSold": [1000, 500, 1500, 800],
+        "UnitPrice": [425.48, 50.00, 800.00, 1.50],
+        "Revenue": [425480.00, 25000.00, 1200000.00, 1200.00],
+        "Profit": [125480.00, 5000.00, 300000.00, 200.00],
+        "OrderID": [1, 2, 3, 4],
+        "AverageOrderValue": [425.48, 50.00, 800.00, 1.50],
+        "ProfitPerUnit": [125.48, 10.00, 200.00, 0.25],
+        "PromotionApplied": [1, 0, 1, 0],
+        "Holiday": [0, 1, 0, 1],
+        "Temperature": [25.0, 18.2, 30.5, 22.0],
+        "FootTraffic": [400, 100, 600, 200]
+    }))
 
     result = da.what_if_analysis(user_prompt)
     # result = da.forecast(forecast_prompt)

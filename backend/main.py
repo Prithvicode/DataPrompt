@@ -225,8 +225,8 @@ async def analyze_data(request: AnalyzeRequest, background_tasks: BackgroundTask
 
         # Handle valid intents
         if intent == "summary":
-            result = analyzer.generate_summary()
-            # result = analyzer.generate_user_friendly_summary()
+            # result = analyzer.generate_summary()
+            result = analyzer.generate_user_friendly_summary()
 
         elif intent == "query":
             result = analyzer.execute_query(request.prompt, df.columns.tolist())
@@ -241,6 +241,7 @@ async def analyze_data(request: AnalyzeRequest, background_tasks: BackgroundTask
             result = analyzer.predict(request.prompt, **parameters)
 
         elif intent == "whatif":
+            print("heelo")
             result = analyzer.what_if_analysis(request.prompt, **parameters)
 
         elif intent == "aggregation":
@@ -315,20 +316,33 @@ async def generate_chat_response(prompt: str, job_id: Optional[str] = None):
             """
         else:
             llama_prompt = f"""
-            You are an assistant in the DataPrompt app. Your task is to explain analysis results clearly and simply for end users.
+You are an assistant in the DataPrompt app. Your role is to explain data analysis results in a short, clear, and user-friendly way.
 
-            - Keep the explanation short and easy to understand.
-            - Currency is in NRs (Nepali Rupees).
-            - Format the response as clean, user-friendly **Markdown** for the frontend UI.
-            - Explain the analysis based on the user's original intent.
+Guidelines:
+- Explain the result simply, as if you're advising a business decision-maker.
+- Focus on what the result **means** and what actions the user might consider.
+- Highlight **trends**, **opportunities**, **risks**, or **anomalies** if visible.
+- Do NOT include raw data or tables in the output.
+- Do NOT wrap the full result or JSON in Markdown.
+- Do NOT wrap the full result or JSON in Code Block.
+- Do NOT explain the whole dataset result, but focus on the interpretation of result.
+- ONLY explain what the result means, in plain terms.
+- Use clean, readable Markdown formatting (e.g., bold for key values).
+- Currency is in NRs (Nepali Rupees).
+- Tailor the explanation based on the user's intent.
+- Write a short but **insightful** summary that helps the user understand what is happening and what they might do next.
+- Do NOT begin your response with phrases like "Sure", "Here's", "This is", or any introductory sentence. Start directly with the insight.
+Context:
+- User Intent: {job_info.get("intent")}
+- User Prompt: {prompt}
+- Result (for your reference only, do NOT return this): {result}
 
-            Context:
-            - **User Intent**: {job_info.get("intent")}
-            - **User Prompt**: {prompt}
-            - **Analyzed Result**: {result}
+Your task:
+Write a short interpretation of the result above, as if explaining it to a non-technical user. Return only the explanation in Markdown — no raw output or JSON.
 
-            Return only the Markdown explanation.
-            """
+Output (Markdown explanation only):
+"""
+
 
 
         try:
@@ -356,7 +370,13 @@ async def generate_chat_response(prompt: str, job_id: Optional[str] = None):
     yield format_data("[DONE]")
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
-MODEL_NAME = "llama3.2"
+# MODEL_NAME = "llama3.2"
+# MODEL_NAME = "llama3.2:1b"
+# MODEL_NAME = "llama3.2:1b"
+# MODEL_NAME = "qwen2.5:1.5b"
+MODEL_NAME = "qwen2.5:0.5b"
+
+
 
 
 @app.post("/chat")
@@ -371,48 +391,48 @@ async def chat(request: ChatRequest):
     )
 
 # ============== Test
-def generate_llama_response(prompt: str):
-    sample_df = pd.DataFrame({
-        "Product": ["Widget A", "Widget B", "Widget C"],
-        "UnitsSold": [120, 85, 60],
-        "Revenue": [2400.0, 1700.0, 1200.0],
-        "Profit": [600.0, 450.0, 300.0],
-        "Region": ["North", "South", "West"]
-    })
+# def generate_llama_response(prompt: str):
+#     sample_df = pd.DataFrame({
+#         "Product": ["Widget A", "Widget B", "Widget C"],
+#         "UnitsSold": [120, 85, 60],
+#         "Revenue": [2400.0, 1700.0, 1200.0],
+#         "Profit": [600.0, 450.0, 300.0],
+#         "Region": ["North", "South", "West"]
+#     })
 
-    # Convert the DataFrame to a readable markdown table or CSV-style string
-    table_str = json.dumps(sample_df.to_dict(orient="records"), indent=2)
+#     # Convert the DataFrame to a readable markdown table or CSV-style string
+#     table_str = json.dumps(sample_df.to_dict(orient="records"), indent=2)
 
-    full_prompt = (
-        "Explain the following analysis result in simple terms and properly structure it in the markdown:\n\n"
-        f"{table_str}\n\n"
-        f"{prompt.strip()}"
-    )
-    payload = {
-        "model": MODEL_NAME,
-        "prompt": full_prompt,
-        "result": sample_df.to_dict(orient='records')  # Convert DataFrame to list of dicts
-    }
+#     full_prompt = (
+#         "Explain the following analysis result in simple terms and properly structure it in the markdown:\n\n"
+#         f"{table_str}\n\n"
+#         f"{prompt.strip()}"
+#     )
+#     payload = {
+#         "model": MODEL_NAME,
+#         "prompt": full_prompt,
+#         "result": sample_df.to_dict(orient='records')  # Convert DataFrame to list of dicts
+#     }
 
-    try:
-        # Make a synchronous POST request to the LLaMA API
-        response = requests.post(OLLAMA_URL, json=payload, stream=True)
-        print("Response from LLaMA:", response.text)
-        # Check for successful response
-        if response.status_code == 200:
-            for chunk in response.iter_lines():
-                if chunk:
-                    yield f"data: {chunk.decode('utf-8')}\n\n"
-        else:
-            yield f"data: [Error {response.status_code}: Failed to get response from LLaMA]\n\n"
+#     try:
+#         # Make a synchronous POST request to the LLaMA API
+#         response = requests.post(OLLAMA_URL, json=payload, stream=True)
+#         print("Response from LLaMA:", response.text)
+#         # Check for successful response
+#         if response.status_code == 200:
+#             for chunk in response.iter_lines():
+#                 if chunk:
+#                     yield f"data: {chunk.decode('utf-8')}\n\n"
+#         else:
+#             yield f"data: [Error {response.status_code}: Failed to get response from LLaMA]\n\n"
 
-    except requests.RequestException as e:
-        yield f"data: [Error: {str(e)}]\n\n"
+#     except requests.RequestException as e:
+#         yield f"data: [Error: {str(e)}]\n\n"
         
-# Test simple streaming response
-@app.post("/stream")
-def stream(prompt: str):
-    return StreamingResponse(generate_llama_response(prompt), media_type="text/event-stream")
+# # Test simple streaming response
+# @app.post("/stream")
+# def stream(prompt: str):
+#     return StreamingResponse(generate_llama_response(prompt), media_type="text/event-stream")
 
 if __name__ == "__main__":
     import uvicorn

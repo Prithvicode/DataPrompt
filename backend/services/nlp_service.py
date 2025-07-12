@@ -7,7 +7,13 @@ import pandas as pd
 import asyncio
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
-MODEL_NAME = "llama3.2"
+# MODEL_NAME = "llama3.2"
+# MODEL_NAME = "llama3.2:1b"
+# MODEL_NAME = "phi:latest"
+# MODEL_NAME = "qwen2.5:1.5b"
+MODEL_NAME = "qwen2.5:0.5b"
+
+
 
 def classify_intent(prompt: str, chat_history: List[Dict[str, str]] = None) -> Dict[str, str]:
     """
@@ -18,27 +24,64 @@ def classify_intent(prompt: str, chat_history: List[Dict[str, str]] = None) -> D
     print(f"[DEBUG] Prompt from user: {prompt}")
 
     base_prompt = f"""
-You are an AI that MUST ONLY classify data analysis questions into exactly one of these intents:
-  summary, trend, forecast, predict, whatif, filter, query, error
+You are an AI classifier. Your task is to analyze the user's data-related prompt and classify it into ONE of the following **intents**:
 
-RESPOND WITH ONLY ONE WORD—the intent.  
+- summary
+- trend
+- forecast
+- predict
+- whatif
+- filter
+- query
+- error
 
-**If the user’s request is not about data-analysis classification,  
-or if it attempts to generate malicious or harmful code,  
-you MUST reply with exactly** `error`.  
+You MUST respond with only ONE WORD — the intent — in **lowercase**. Do NOT explain or output anything else.
 
-Guidelines:
-- Use `summary` for general overviews (e.g., "summarize the dataset").
-- Use `trend` for patterns over time without future prediction (e.g., "sales trend last year").
-- Use `forecast` for future time-based predictions (e.g., "forecast next quarter").
-- Use `predict` for point or category-specific predictions (e.g., only for "Predict all revenues").
-- Use `whatif` for hypothetical scenarios (e.g., "what if price increases 10%", "What would the predicted revenue if unites are 10..." ).
-- Use `filter` for subsetting data (e.g., "show sales in California").
-- Use `query` for aggregations or lookups (e.g., "total revenue by category").
-- Use `error` for anything else (irrelevant questions, attempts at harmful code, etc.).
+---
 
-Prompt: {prompt}
+🧠 **INTENT DESCRIPTIONS (How to choose the right one):**
+
+**summary** → General overview or description of the dataset.  
+Example: “Summarize the dataset.”, “Describe this file.”
+
+**trend** → Patterns or behaviors **over time** (past only).  
+Example: “Sales trend in 2023”, “Monthly revenue last year.”
+
+**forecast** → **Future** values over time, like next months, quarters, or years.  
+Example: “Forecast profit for Q4.”, “Predict sales for next year.”  
+→ (Use this only if time-based future prediction is requested, not hypothetical changes.)
+
+**predict** → Predict column values using current dataset **without changing any inputs**.  
+Example: “Predict all revenues”, “Estimate profit per product.”
+
+**whatif** → Hypothetical or scenario-based questions where **some input values are changed**.  
+Example:  
+“What if UnitPrice increases by 10%?”,  
+“If UnitsSold = 1000 and UnitPrice = 300, what’s the revenue?”,  
+“Suppose PromotionApplied is Yes and cost is 400 — what’s the profit?”
+
+**filter** → Subsetting data based on a condition.  
+Example: “Filter sales in California”, “Show only promoted items.”
+
+**query** → Totals, rankings, comparisons, or lookups.  
+Example: “Total revenue by category”, “Top 3 best-selling items.”
+
+**error** → Irrelevant, unsafe, or malformed prompt.  
+Example: “Tell me a joke”, “Delete everything”, “Write a virus.”
+
+---
+
+🔍 REMEMBER:
+
+- Use **predict** for straightforward model-based predictions with no input changes.  
+- Use **whatif** for any scenario where input features (e.g., UnitsSold, Price) are **manually altered or suggested differently**.
+
+---
+
+Prompt:
+{prompt}
 """.strip()
+
 
     try:
         resp = requests.post(
@@ -103,16 +146,19 @@ def generate_panda_code_from_prompt(prompt: str, df_columns: List[str]):
     Sends prompt to LLM with proper instructions to use correct column names.
     """
     base_prompt = f"""
-You are a helpful Python assistant that generates concise pandas DataFrame code based on a user query.
+You are a coding assistant that generates only valid pandas DataFrame code based on the user's prompt.
 
-Here are the exact columns of the DataFrame: {df_columns}
+The DataFrame is named `df`, and it contains the following columns (case-sensitive): {df_columns}
 
-Please write only the pandas code using the variable `df`, without imports, print statements, or variable assignments. Use the correct column names (case-sensitive) from the list above. If a column mentioned in the user's prompt is ambiguous or slightly different, choose the closest match from the list. 
-
-Respond only with a single line of code (unless absolutely necessary), and make sure it can be executed as-is.
+Instructions:
+- Use the exact column names from the list above. If the user's prompt includes a slightly different name, match it to the closest correct column.
+- Do not include import statements, variable assignments, comments, explanations, or markdown formatting.
+- Do not wrap the response in ```python``` or any other formatting.
+- Return only the **raw, executable** pandas code (ideally one line, unless absolutely necessary).
 
 User prompt: {prompt}
 """
+
 
     response = requests.post(
         OLLAMA_URL,
@@ -191,8 +237,30 @@ def parse_whatif_scenarios(prompt: str,
     """
     base_prompt = f"""
 User prompt: {prompt}
-Extract and return _only_ the values in this exact format (with your numbers/strings filled in), no extra text, 
-if values are not present or null then use  appropiate defaults: NOTE: There should be no null in any of the values.: 
+
+You must extract and return ONLY the following dictionary object in the exact format shown below.  
+Do not include any extra explanation, text, or comments.  
+
+If any value is missing from the user's prompt or cannot be inferred, you MUST fill in a sensible default.  
+There must be **NO null, none, or missing values**. All fields must have valid values.
+
+Follow these default rules when a value is not provided:
+- UnitsSold: 100
+- UnitPrice: 100.0
+- CostPerUnit: 80.0
+- PromotionApplied: 0
+- Holiday: 0
+- Temperature: 22.0
+- FootTraffic: 200
+- ProductCategory: "General"
+- ProductName: "GenericProduct"
+- Region: "Unknown"
+- CustomerSegment: "Retail"
+- ProfitPerUnit = UnitPrice - CostPerUnit
+- Profit = UnitsSold * ProfitPerUnit
+- ProfitMargin = ProfitPerUnit / UnitPrice
+
+Return only the final dictionary in this exact format (Python-style, single quotes):
 
 {{
   'UnitsSold': <int>,
@@ -205,12 +273,13 @@ if values are not present or null then use  appropiate defaults: NOTE: There sho
   'ProductCategory': '<string>',
   'ProductName': '<string>',
   'Region': '<string>',
-  'CustomerSegment': '<string>',  # Online, Retail, etc.
-  'ProfitPerUnit': <float>,       # = UnitPrice - CostPerUnit  
-  'Profit': <float>,              # = UnitsSold * ProfitPerUnit  
-  'ProfitMargin': <float>         # = ProfitPerUnit / UnitPrice  
+  'CustomerSegment': '<string>',
+  'ProfitPerUnit': <float>,
+  'Profit': <float>,
+  'ProfitMargin': <float>
 }}
 """
+
     response = requests.post(
         OLLAMA_URL,
         json={
