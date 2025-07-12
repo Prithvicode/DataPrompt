@@ -1,7 +1,7 @@
 "use client";
 import {
-  LineChart,
-  Line,
+  BarChart,
+  Bar,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -10,43 +10,46 @@ import {
   ResponsiveContainer,
 } from "recharts";
 
-export function MonthlyPerformanceChart({ data }: { data: any[] }) {
+export function ProductPerformanceChart({ data }: { data: any[] }) {
   return (
     <div className="h-[400px]">
       <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={data}>
+        <BarChart
+          data={data}
+          layout="vertical"
+          margin={{ top: 20, right: 30, left: 20, bottom: 20 }}
+        >
           <CartesianGrid strokeDasharray="3 3" />
-          <XAxis
-            dataKey="month"
+          <XAxis type="number" tick={{ fontSize: 12 }} />
+          <YAxis
+            type="category"
+            dataKey="category"
+            width={150}
             tick={{ fontSize: 12 }}
-            angle={-45}
-            textAnchor="end"
           />
-          <YAxis />
           <Tooltip
             formatter={(value: number) =>
               new Intl.NumberFormat("en-US", {
                 style: "currency",
                 currency: "USD",
+                maximumFractionDigits: 0,
               }).format(value)
             }
           />
           <Legend />
-          <Line
-            type="monotone"
+          <Bar
             dataKey="revenue"
-            stroke="#4a90e2"
+            fill="#4a90e2" // Refined blue for revenue
             name="Revenue"
-            strokeWidth={2}
+            radius={[0, 4, 4, 0]}
           />
-          <Line
-            type="monotone"
+          <Bar
             dataKey="profit"
-            stroke=" #66bb6a"
+            fill="#66bb6a" // Harmonious green for profit
             name="Profit"
-            strokeWidth={2}
+            radius={[0, 4, 4, 0]}
           />
-        </LineChart>
+        </BarChart>
       </ResponsiveContainer>
     </div>
   );

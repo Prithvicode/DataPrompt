@@ -17,7 +17,7 @@ export default function ForecastResults({ data }: ForecastResultsProps) {
   const chartData = data || [];
   const title = data?.target_column
     ? `Forecast for ${data.target_column}`
-    : "Forecast Resultsss";
+    : "Forecast Results";
   const historicalData = chartData.filter((d: any) => d.type === "historical");
   const forecastData = chartData.filter((d: any) => d.type === "forecast");
   // Merge sorted data for x-axis continuity
