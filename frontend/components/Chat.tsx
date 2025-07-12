@@ -1,484 +1,359 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
-import { Sparkles, X, BarChart, Database } from "lucide-react";
+import { useState, useEffect } from "react";
 import MessageList from "./chat/MessageList";
 import ChatInput from "./chat/ChatInput";
 import DataTable from "./chat/DataTable";
 import DataSummary from "./chat/DataSummary";
 import ForecastResults from "./chat/ForecastResults";
-import AggregationResults from "./chat/AggregationResults";
-import DatasetSelector from "./chat/DatasetSelector";
-import type { Message, DatasetInfo, AnalysisResult } from "./chat/types";
-import { cn } from "@/lib/utils";
-import { fetchDatasets as fetchDatasetsAPI } from "@/services/query";
-
-// Import UI components
-import { Header } from "./Header";
-import { IconHeader } from "./IconHeader";
-import { ActionButton } from "./ActionButton";
-import { EmptyState } from "./EmptyState";
-import { Sidebar } from "./Sidebar";
-import { SuggestionGrid } from "./SuggestionGrid";
-import PredictionResults from "./chat/PredictResults";
-import { Loader } from "./Loader";
-import QueryResultCard from "./chat/QueryResultCard";
-import WhatIfResultCard from "./chat/WhatifResultCard";
+import ColumnConfig from "./chat/ColumnConfig";
+import { Message, TableRow } from "./chat/types";
 
 export default function ChatComponent() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(false);
   const [file, setFile] = useState<File | null>(null);
-  const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(
-    null
-  );
-  const [streamContent, setStreamContent] = useState("");
+  const [tableData, setTableData] = useState<TableRow[] | null>(null);
+  const [summaryData, setSummaryData] = useState<{
+    overview: any;
+    insights: any;
+    visual_data: any;
+  } | null>(null);
+  const [forecastData, setForecastData] = useState<any | null>(null);
+  const [isStreaming, setIsStreaming] = useState(false);
   const [showSidebar, setShowSidebar] = useState(false);
-  const [datasets, setDatasets] = useState<DatasetInfo[]>([]);
-  const [activeDatasetId, setActiveDatasetId] = useState<string | null>(null);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const [error, setError] = useState<string | undefined>(undefined);
-  const [uploadedDatasetId, setUploadedDatasetId] = useState<string | null>(
-    null
-  );
-  const [cachedResults, setCachedResults] = useState<any[]>([]);
+  const [streamContent, setStreamContent] = useState("");
+  const [showColumnConfig, setShowColumnConfig] = useState(false);
+  const [columnConfig, setColumnConfig] = useState<any>(null);
 
-  useEffect(() => {
-    const stored = JSON.parse(localStorage.getItem("cachedResults") || "[]");
-    setCachedResults(stored);
-  }, []);
-
+  // Prevent body scrolling
   useEffect(() => {
     document.body.style.overflow = "hidden";
-    fetchDatasetsData();
     return () => {
       document.body.style.overflow = "auto";
     };
   }, []);
 
-  useEffect(() => {
-    scrollToBottom();
-  }, [messages, streamContent]);
-
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  };
-
-  // Cache results in local storage
-  const saveResultToLocal = (result: AnalysisResult) => {
-    const existing = JSON.parse(localStorage.getItem("cachedResults") || "[]");
-    const newResult = {
-      id: Date.now(), // unique ID based on timestamp
-      timestamp: new Date(),
-      type: result.type,
-      result,
-    };
-    localStorage.setItem(
-      "cachedResults",
-      JSON.stringify([newResult, ...existing])
-    );
-  };
-
-  const fetchDatasetsData = async () => {
-    try {
-      const response = await fetchDatasetsAPI();
-      if (response && response.datasets) {
-        setDatasets(response.datasets);
-      }
-    } catch (error) {
-      console.error("Error fetching datasets:", error);
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          content: "Failed to fetch datasets from the server.",
-          timestamp: new Date(),
-          error: true,
-        },
-      ]);
+  const handleFileChange = (newFile: File | null) => {
+    setFile(newFile);
+    if (newFile) {
+      setShowColumnConfig(true);
+    } else {
+      setShowColumnConfig(false);
+      setColumnConfig(null);
     }
   };
 
-  const uploadFile = async (file: File) => {
+  const handleConfigComplete = (config: any) => {
+    setColumnConfig(config);
+    setShowColumnConfig(false);
+
+    // Add a system message about the configuration
+    const configMessage: Message = {
+      role: "assistant",
+      content: `Dataset configured successfully! Target variable: ${config.target_column}. You can now ask questions about your data.`,
+      timestamp: new Date(),
+    };
+    setMessages((prev) => [...prev, configMessage]);
+  };
+
+  const handleConfigBack = () => {
+    setShowColumnConfig(false);
+    setFile(null);
+  };
+
+  const processData = async (prompt: string, file: File | null) => {
+    if (!prompt.trim() && !file) return;
+
+    // Check if a file is selected and configured
+    if (!file || !columnConfig) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "user",
+          content: prompt || "File uploaded",
+          timestamp: new Date(),
+        },
+        {
+          role: "assistant",
+          content:
+            "Error: Please upload and configure a CSV file before asking questions.",
+          timestamp: new Date(),
+        },
+      ]);
+      return;
+    }
+
+    setLoading(true);
+    setIsStreaming(true);
+    setShowSidebar(true);
+    setStreamContent("");
+
+    // Add user message to the chat
+    const userMessage: Message = {
+      role: "user",
+      content: prompt || "File uploaded",
+      timestamp: new Date(),
+    };
+    setMessages((prev) => [...prev, userMessage]);
+
+    // Add a temporary assistant message
+    const tempAssistantMessage: Message = {
+      role: "assistant",
+      content: "",
+      timestamp: new Date(),
+    };
+    setMessages((prev) => [...prev, tempAssistantMessage]);
+
+    // Clear any previous data
+    setTableData(null);
+    setSummaryData(null);
+    setForecastData(null);
+
     const formData = new FormData();
+    formData.append("prompt", prompt || "");
     formData.append("file", file);
+    formData.append("column_config", JSON.stringify(columnConfig));
 
     try {
-      setLoading(true);
-      const response = await fetch("http://localhost:8000/upload", {
+      const response = await fetch("http://localhost:8000/process", {
         method: "POST",
         body: formData,
       });
 
-      if (!response.ok)
-        throw new Error(`Upload failed: ${response.statusText}`);
-
-      const data = await response.json();
-      setUploadedDatasetId(data.id); // Store dataset ID for later use
-      setActiveDatasetId(data.id); // Also activate it
-
-      // setMessages((prev) => [
-      //   ...prev,
-      //   {
-      //     role: "assistant",
-      //     content: `File "${data.filename}" uploaded successfully. You can now ask questions about this data.`,
-      //     timestamp: new Date(),
-      //   },
-      // ]);
-
-      fetchDatasetsData();
-      return data.id;
-    } catch (error) {
-      console.error("Error uploading file:", error);
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          content: `Error uploading file: ${
-            error instanceof Error ? error.message : "Unknown error"
-          }`,
-          timestamp: new Date(),
-          error: true,
-        },
-      ]);
-      return null;
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const processData = async (prompt: string, attachedFile: File | null) => {
-    if (!prompt.trim() && !attachedFile) return;
-
-    setMessages((prev) => [
-      ...prev,
-      {
-        role: "user",
-        content: prompt,
-        timestamp: new Date(),
-        file: attachedFile
-          ? {
-              name: attachedFile.name,
-              type: attachedFile.type,
-              size: attachedFile.size,
-            }
-          : null,
-      },
-    ]);
-
-    setLoading(true);
-    setStreamContent("");
-    setAnalysisResult(null);
-
-    let datasetId = uploadedDatasetId || activeDatasetId;
-    if (!datasetId) {
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          content: "Please upload a file first or select a dataset to analyze.",
-          timestamp: new Date(),
-        },
-      ]);
-      setLoading(false);
-      return;
-    }
-
-    const chatHistory = messages
-      .slice(-10)
-      .map((msg) => ({ role: msg.role, content: msg.content }));
-
-    setMessages((prev) => [
-      ...prev,
-      { role: "assistant", content: "", timestamp: new Date() },
-    ]);
-
-    try {
-      const analysisResponse = await fetch("http://localhost:8000/analyze", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          prompt,
-          dataset_id: datasetId,
-          chat_history: chatHistory,
-        }),
-      });
-
-      if (!analysisResponse.ok)
-        throw new Error(`Analysis failed: ${analysisResponse.statusText}`);
-      const analysisData = await analysisResponse.json();
-      console.log("Analysis response:", analysisData);
-
-      if (analysisData.result) {
-        const isErrorResult =
-          analysisData.result.error ||
-          (analysisData.result.message && !analysisData.result.type);
-
-        if (!isErrorResult) {
-          setAnalysisResult(analysisData.result);
-          setShowSidebar(true);
-          saveResultToLocal(analysisData.result); // Save the result
-        }
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
       }
 
-      const chatResponse = await fetch("http://localhost:8000/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          prompt,
-          chat_history: chatHistory,
-          job_id: analysisData.job_id,
-        }),
-      });
+      const reader = response.body?.getReader();
+      if (!reader) {
+        throw new Error("Failed to get response reader");
+      }
 
-      console.log("Chat response:", chatResponse.body);
-      if (!chatResponse.ok)
-        throw new Error(`Chat failed: ${chatResponse.statusText}`);
-      const reader = chatResponse.body?.getReader();
-      if (!reader) throw new Error("No reader");
-
-      let fullContent = "";
-      let isError = false;
-
+      let accumulatedContent = "";
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-        const lines = new TextDecoder().decode(value).split("\n");
+
+        // Convert the chunk to text
+        const chunk = new TextDecoder().decode(value);
+        const lines = chunk.split("\n");
 
         for (const line of lines) {
           if (line.startsWith("data: ")) {
-            const data = line.slice(6).trim();
-
-            try {
-              const parsed = JSON.parse(data);
-
-              if (parsed.content === "[DONE]") {
-                // Final update to set the completed assistant message
-                setMessages((prev) => {
-                  const updated = [...prev];
-                  const lastMessage = updated[updated.length - 1];
-                  if (lastMessage?.role === "assistant") {
-                    updated[updated.length - 1] = {
-                      ...lastMessage,
-                      content: fullContent,
-                      timestamp: new Date(),
-                      error: isError, // Set the error flag from streamed responses
-                    };
-                  }
-                  return updated;
-                });
-                break;
+            const data = line.slice(6);
+            if (data === "[DONE]") {
+              // Update the final message
+              setMessages((prev) => {
+                const newMessages = [...prev];
+                newMessages[newMessages.length - 1] = {
+                  role: "assistant",
+                  content: accumulatedContent,
+                  timestamp: new Date(),
+                };
+                return newMessages;
+              });
+            } else {
+              try {
+                const parsed = JSON.parse(data);
+                if (parsed.content) {
+                  accumulatedContent += parsed.content;
+                  setStreamContent(accumulatedContent);
+                }
+              } catch (e) {
+                console.error("Failed to parse streaming data:", e);
               }
-
-              if (parsed.content) {
-                fullContent += parsed.content;
-                setStreamContent(fullContent);
-              }
-
-              // Track if any part of the message was flagged as an error
-              if (parsed.error) {
-                isError = true;
-              }
-            } catch (err) {
-              console.error("JSON parsing error in streamed chunk:", err, line);
             }
           }
         }
       }
-    } catch (err: any) {
-      const errorMessage = `I encountered an error: ${err.message}`;
+    } catch (error) {
+      console.error("Error processing data:", error);
+      // Update the temporary message with an error message
       setMessages((prev) => {
-        const updated = [...prev];
-        updated[updated.length - 1] = {
+        const newMessages = [...prev];
+        newMessages[newMessages.length - 1] = {
           role: "assistant",
-          content: errorMessage,
+          content: `Error: ${(error as Error).message}`,
           timestamp: new Date(),
-          error: true, // Mark as error
         };
-        return updated;
+        return newMessages;
       });
     } finally {
       setLoading(false);
+      setIsStreaming(false);
       setStreamContent("");
     }
   };
 
-  const handleDatasetSelect = (datasetId: string) => {
-    setActiveDatasetId(datasetId);
-    const dataset = datasets.find((d) => d.id === datasetId);
-    if (dataset) {
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          content: `Dataset "${dataset.filename}" selected. You can now ask questions about this data.`,
-          timestamp: new Date(),
-        },
-      ]);
-    }
+  const handleUploadFile = (uploadedFile: File) => {
+    handleFileChange(uploadedFile);
   };
 
-  const DataView = () => {
-    if (!analysisResult) return null;
+  const DataView = () => (
+    <div className="space-y-6">
+      {tableData && <DataTable data={tableData} />}
+      {summaryData && <DataSummary data={summaryData} />}
+      {forecastData && <ForecastResults data={forecastData} />}
+    </div>
+  );
 
-    switch (analysisResult.type) {
-      case "summary":
-        return <DataSummary data={analysisResult.data} />;
-      case "forecast":
-        console.log("analyszed data", analysisResult.data);
-        return <ForecastResults data={analysisResult.data} />;
-      case "predict":
-        return (
-          <PredictionResults
-            data={analysisResult.data}
-            mae={analysisResult.mae ?? 0}
-            r2={analysisResult.r2 ?? 0}
-            visualization={
-              analysisResult.visualization ?? {
-                type: "",
-                data: [],
-                x: "",
-                y: "",
-                title: "",
-                xLabel: "",
-                yLabel: "",
-              }
-            }
-          />
-        );
-      case "aggregation":
-        return <AggregationResults data={analysisResult} />;
-      case "filter":
-        return <DataTable data={analysisResult.data} intentType="filter" />;
-      case "query":
-        return analysisResult.data ? (
-          <QueryResultCard
-            value={analysisResult.data}
-            note={analysisResult.note}
-          />
-        ) : null;
-      case "whatif":
-        return (
-          <WhatIfResultCard
-            value={analysisResult.data}
-            note={analysisResult.user_input}
-          />
-        );
-      default:
-        return (
-          <div className="p-4 text-gray-500">
-            No visualization available for this result type.
-          </div>
-        );
-    }
-  };
-
-  const hasData = !!analysisResult;
-  const hasMessages = messages.length > 0;
-
-  const examplePrompts = [
-    "Analyze trends in this dataset",
-    "Summarize key insights",
-    "Create a 3-month forecast",
-    "Find outliers in this data",
-  ];
+  // Show column configuration if file is uploaded but not configured
+  if (showColumnConfig) {
+    return (
+      <div className="h-screen bg-white text-gray-900 overflow-y-auto">
+        <ColumnConfig
+          file={file}
+          onConfigComplete={handleConfigComplete}
+          onBack={handleConfigBack}
+        />
+      </div>
+    );
+  }
 
   return (
-    <div className="flex h-screen text-gray-800 bg-gray-200 overflow-hidden w-full custom-scrollbar">
+    <div className="flex h-screen bg-white text-gray-900 w-full overflow-hidden">
+      {/* Custom scrollbar styles */}
+      <style jsx global>{`
+        /* Custom scrollbar styles */
+        ::-webkit-scrollbar {
+          width: 8px;
+          height: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+          background: #f8f9fa;
+        }
+
+        ::-webkit-scrollbar-thumb {
+          background: #cbd5e0;
+          border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+          background: #a0aec0;
+        }
+
+        /* Firefox scrollbar */
+        * {
+          scrollbar-width: thin;
+          scrollbar-color: #cbd5e0 #f8f9fa;
+        }
+      `}</style>
+
+      {/* Main Chat Area */}
       <div
-        className={cn(
-          "flex flex-col flex-1 h-full transition-all duration-300 ease-in-out",
-          showSidebar && hasData ? "lg:pr-[600px]" : ""
-        )}
+        className={`flex flex-col flex-1 transition-all duration-300 ${
+          showSidebar ? "lg:w-2/3" : "w-full"
+        }`}
       >
-        <Header
-          leftContent={
-            <IconHeader
-              icon={Sparkles}
-              text="DataPrompt"
-              iconColor="text-blue-600"
-            />
-          }
-          rightContent={
-            datasets.length > 0 && (
-              <div className="flex items-center">
-                <Database className="h-4 w-4 text-blue-600 mr-2" />
-                <DatasetSelector
-                  datasets={datasets}
-                  activeDatasetId={activeDatasetId}
-                  onSelect={handleDatasetSelect}
+        <div className="flex-1 overflow-hidden">
+          <div className="h-full relative">
+            <div className="absolute inset-0 overflow-y-auto">
+              <div className="max-w-5xl mx-auto px-4">
+                <MessageList
+                  messages={messages}
+                  isStreaming={isStreaming}
+                  streamContent={streamContent}
                 />
               </div>
-            )
-          }
-        />
+            </div>
+          </div>
+        </div>
 
-        {!hasMessages ? (
-          <EmptyState
-            icon={Sparkles}
-            title="Chat with DataPrompt"
-            description="Upload your data and ask questions to get insights, visualizations, and forecasts."
-            iconColor="text-blue-600"
-            className="flex-1 bg-gray-100"
-            action={
-              <>
-                <ChatInput
-                  onUploadFile={uploadFile}
-                  onSend={processData}
-                  loading={loading}
-                  file={file}
-                  onFileChange={setFile}
-                />
-                <SuggestionGrid
-                  suggestions={examplePrompts}
-                  onSelect={(suggestion: string) =>
-                    processData(suggestion, file)
-                  }
-                  className="mt-8"
-                />
-              </>
-            }
+        <div className="w-full">
+          <ChatInput
+            onSend={processData}
+            loading={loading}
+            file={file}
+            onFileChange={handleFileChange}
+            onUploadFile={handleUploadFile}
           />
-        ) : (
-          <>
-            <div className="flex-1 overflow-y-auto px-4 py-4 scroll-smooth bg-gray-100 custom-scrollbar">
-              <MessageList
-                messages={messages}
-                isStreaming={!!streamContent}
-                streamContent={streamContent}
-              />
-              {loading && !streamContent && <Loader loading={loading} />}
-              <div ref={messagesEndRef} />
-            </div>
-
-            <div className="p-6 bg-gray-100">
-              <ChatInput
-                onUploadFile={uploadFile}
-                onSend={processData}
-                loading={loading}
-                file={file}
-                onFileChange={setFile}
-              />
-            </div>
-          </>
-        )}
+        </div>
       </div>
 
-      <Sidebar
-        isOpen={showSidebar && hasData}
-        onClose={() => setShowSidebar(false)}
-        header={<IconHeader icon={BarChart} text="Data Analysis" />}
-      >
-        <DataView />
-      </Sidebar>
+      {/* Data Visualization Sidebar - Desktop */}
+      {(tableData || summaryData || forecastData) && showSidebar && (
+        <div className="hidden lg:block w-1/3 border-l border-gray-200 overflow-y-auto bg-gray-50 p-4">
+          <div className="flex justify-between items-center mb-4">
+            <h2 className="text-xl font-semibold text-blue-600">
+              Data Analysis
+            </h2>
+            <button
+              onClick={() => setShowSidebar(false)}
+              className="text-gray-500 hover:text-gray-700"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                className="h-5 w-5"
+                viewBox="0 0 20 20"
+                fill="currentColor"
+              >
+                <path
+                  fillRule="evenodd"
+                  d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z"
+                  clipRule="evenodd"
+                />
+              </svg>
+            </button>
+          </div>
+          <DataView />
+        </div>
+      )}
 
-      {!showSidebar && hasData && (
-        <ActionButton
-          icon={BarChart}
+      {/* Data Visualization - Mobile */}
+      {(tableData || summaryData || forecastData) && showSidebar && (
+        <div className="lg:hidden fixed inset-0 z-50 bg-gray-50 overflow-y-auto">
+          <div className="p-4">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-xl font-semibold text-blue-600">
+                Data Analysis
+              </h2>
+              <button
+                onClick={() => setShowSidebar(false)}
+                className="text-gray-500 hover:text-gray-700 p-2"
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  className="h-6 w-6"
+                  viewBox="0 0 20 20"
+                  fill="currentColor"
+                >
+                  <path
+                    fillRule="evenodd"
+                    d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z"
+                    clipRule="evenodd"
+                  />
+                </svg>
+              </button>
+            </div>
+            <DataView />
+          </div>
+        </div>
+      )}
+
+      {/* Toggle Sidebar Button */}
+      {(tableData || summaryData || forecastData) && !showSidebar && (
+        <button
           onClick={() => setShowSidebar(true)}
-          className="fixed bottom-24 right-4"
-          label="Show data analysis"
-        />
+          className="fixed right-4 bottom-24 bg-blue-600 text-white p-3 rounded-full shadow-lg hover:bg-blue-700 transition-colors z-10"
+          title="Show Data Analysis"
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            className="h-6 w-6"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"
+            />
+          </svg>
+        </button>
       )}
     </div>
   );

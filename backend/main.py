@@ -11,14 +11,15 @@ from datetime import datetime
 import asyncio
 from pydantic import BaseModel
 import numpy as np
-# Import services
-from services.file_service import save_file, get_dataset, list_datasets
-from services.nlp_service import classify_intent
-from services.data_service import DataAnalyzer
+import math
 import aiohttp
-
 import requests
 
+# Import services
+from services.file_service import save_file, get_dataset, list_datasets
+from services.nlp_service import classify_intent, extract_operation_from_prompt, stream_llama_response
+from services.data_service import DataAnalyzer
+from services.forecast_service import make_dynamic_prediction, make_prediction
 
 
 # In-memory storage for datasets and analysis jobs
@@ -49,12 +50,6 @@ class ChatRequest(BaseModel):
     prompt: str
     chat_history: Optional[List[ChatMessage]] = None
     job_id: Optional[str] = None
-
-
-import math
-import numpy as np
-import pandas as pd
-import json
 
 def make_json_safe(data):
     """
@@ -90,6 +85,44 @@ def make_json_safe(data):
         return make_json_safe(vars(data))
     else:
         return data
+
+def clean_data(data):
+    """
+    Recursively clean data to remove NaN and infinite float values.
+    """
+    if isinstance(data, dict):
+        return {k: clean_data(v) for k, v in data.items()}
+    elif isinstance(data, list):
+        return [clean_data(item) for item in data]
+    elif isinstance(data, float):
+        return None if math.isinf(data) or math.isnan(data) else data
+    elif isinstance(data, (np.integer, np.int64, np.int32, np.int16, np.int8)):
+        return int(data)
+    elif isinstance(data, (np.floating, np.float64, np.float32, np.float16)):
+        return None if math.isinf(data) or math.isnan(data) else float(data)
+    elif isinstance(data, pd.Timestamp):
+        return data.isoformat()
+    elif isinstance(data, pd.Series):
+        return clean_data(data.tolist())
+    elif isinstance(data, pd.DataFrame):
+        return clean_data(data.to_dict(orient='records'))
+    elif isinstance(data, np.bool_):
+        return bool(data)
+    else:
+        return data
+
+async def stream_response(generator):
+    """
+    Helper function to stream the response in a format that the frontend can understand.
+    """
+    try:
+        for chunk in generator:
+            if chunk:
+                yield f"data: {json.dumps({'content': chunk})}\n\n"
+    except Exception as e:
+        yield f"data: {json.dumps({'error': str(e)})}\n\n"
+    finally:
+        yield "data: [DONE]\n\n"
 
 @app.post("/upload")
 async def upload_file(file: UploadFile = File(...)):
@@ -138,6 +171,17 @@ async def upload_file(file: UploadFile = File(...)):
 @app.get("/test")
 async def test():
     return {"message": "Hello, World!"}
+
+@app.get("/health")
+async def health_check():
+    """
+    Simple health check endpoint to verify the backend is running.
+    """
+    return {
+        "status": "healthy",
+        "message": "Backend is running",
+        "timestamp": datetime.now().isoformat()
+    }
 
 @app.get("/datasets")
 async def list_datasets():
@@ -389,6 +433,316 @@ async def chat(request: ChatRequest):
         # generate_llama_response(request.prompt),
         media_type="text/event-stream"
     )
+
+@app.post("/process")
+async def process_file_and_prompt(
+    file: UploadFile = File(...), 
+    prompt: str = Form(...),
+    column_config: str = Form(None)
+):
+    try:
+        if not prompt.strip():
+            raise HTTPException(status_code=400, detail="Prompt cannot be empty.")
+
+        # Validate file extension – only CSV files are allowed
+        if not file.filename.lower().endswith(".csv"):
+            raise HTTPException(status_code=400, detail="Only CSV files are supported.")
+
+        # Read and decode the CSV file
+        contents = await file.read()
+        if not contents:
+            raise HTTPException(status_code=400, detail="File is empty.")
+            
+        try:
+            df = pd.read_csv(io.StringIO(contents.decode("utf-8")))
+            if df.empty:
+                raise HTTPException(status_code=400, detail="CSV file contains no data.")
+        except pd.errors.ParserError as parse_err:
+            raise HTTPException(status_code=400, detail=f"CSV Parsing Error: {parse_err}")
+        except UnicodeDecodeError:
+            raise HTTPException(status_code=400, detail="Invalid file encoding. Please use UTF-8.")
+
+        # Apply column configuration if provided
+        if column_config:
+            try:
+                config = json.loads(column_config)
+                numeric_columns = config.get("numeric_columns", [])
+                categorical_columns = config.get("categorical_columns", [])
+                date_columns = config.get("date_columns", [])
+                target_column = config.get("target_column")
+                
+                # Convert column types
+                for col in numeric_columns:
+                    if col in df.columns:
+                        df[col] = pd.to_numeric(df[col], errors='coerce')
+                        
+                for col in categorical_columns:
+                    if col in df.columns:
+                        df[col] = df[col].astype('category')
+                        
+                for col in date_columns:
+                    if col in df.columns:
+                        df[col] = pd.to_datetime(df[col], errors='coerce')
+                        
+            except json.JSONDecodeError:
+                raise HTTPException(status_code=400, detail="Invalid column configuration format.")
+
+        # Use NLP service to extract operation from the prompt
+        op = extract_operation_from_prompt(prompt)
+        operation = op.get("operation")
+        
+        # Process the data based on the operation
+        result_data = {}
+        response_message = ""
+        
+        if operation == "summarize":
+            # Generate summary statistics using pandas
+            if column_config:
+                # Use dynamic summary with column configuration
+                from services.data_service import DataAnalyzer
+                analyzer = DataAnalyzer(df)
+                summary_result = analyzer.generate_dynamic_summary(config)
+                result_data = summary_result
+            else:
+                # Use basic summary
+                summary_stats = clean_data(df.describe(include="all").to_dict())
+                result_data = {
+                    "operation": "summarize",
+                    "data": summary_stats
+                }
+            response_message = "Data summary generated."
+            
+        elif operation == "row":
+            row_index = op.get("row_value")
+            if row_index is None:
+                raise HTTPException(status_code=400, detail="No row number provided in the prompt.")
+            
+            try:
+                row_index = int(row_index)
+                if row_index < 0 or row_index >= len(df):
+                    raise HTTPException(status_code=400, detail="Row number out of range.")
+                
+                row_data = clean_data(df.iloc[row_index].to_dict())
+                result_data = {
+                    "operation": "row",
+                    "data": row_data
+                }
+                response_message = f"Row {row_index} data retrieved."
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Invalid row number provided.")
+                
+        elif operation == "table":
+            # Convert the entire DataFrame to a dictionary
+            table_data = clean_data(df.to_dict(orient="records"))
+            result_data = {
+                "operation": "table",
+                "data": table_data
+            }
+            response_message = "Table data retrieved."
+            
+        elif operation == "forecast":
+            # Make predictions using the forecast service with dynamic configuration
+            if column_config and target_column:
+                forecast_results = make_dynamic_prediction(df, config)
+            else:
+                forecast_results = make_prediction(df)
+            result_data = {
+                "operation": "forecast",
+                "data": forecast_results
+            }
+            response_message = "Forecast completed successfully."
+            
+        else:
+            # For general queries, just return a message
+            response_message = "No specific operation detected. Please try again with a more specific prompt."
+            result_data = {
+                "operation": "query",
+                "data": None
+            }
+        
+        # Generate a natural language explanation using the LLM
+        explanation_generator = stream_llama_response(prompt, result_data)
+        
+        # Return streaming response
+        return StreamingResponse(
+            stream_response(explanation_generator),
+            media_type="text/event-stream"
+        )
+
+    except Exception as e:
+        print(f"[ERROR] Process endpoint error: {e}")
+        print(f"[ERROR] Error type: {type(e)}")
+        import traceback
+        print(f"[ERROR] Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+@app.post("/upload-and-analyze")
+async def upload_and_analyze(file: UploadFile = File(...)):
+    """
+    Upload a CSV file and return column information for configuration.
+    """
+    try:
+        if not file.filename.lower().endswith(".csv"):
+            raise HTTPException(status_code=400, detail="Only CSV files are supported.")
+
+        contents = await file.read()
+        if not contents:
+            raise HTTPException(status_code=400, detail="File is empty.")
+            
+        try:
+            df = pd.read_csv(io.StringIO(contents.decode("utf-8")))
+            if df.empty:
+                raise HTTPException(status_code=400, detail="CSV file contains no data.")
+        except pd.errors.ParserError as parse_err:
+            raise HTTPException(status_code=400, detail=f"CSV Parsing Error: {parse_err}")
+        except UnicodeDecodeError:
+            raise HTTPException(status_code=400, detail="Invalid file encoding. Please use UTF-8.")
+
+        # Analyze columns
+        columns_info = []
+        for col in df.columns:
+            col_info = {
+                "name": col,
+                "dtype": str(df[col].dtype),
+                "unique_values": int(df[col].nunique()),
+                "missing_values": int(df[col].isnull().sum()),
+                "sample_values": df[col].dropna().unique()[:5].tolist()
+            }
+            
+            # Auto-detect column type
+            if df[col].dtype in ['int64', 'float64']:
+                col_info["suggested_type"] = "numeric"
+            elif df[col].dtype == 'object':
+                # Check if it might be a date
+                try:
+                    pd.to_datetime(df[col].dropna().iloc[:10])
+                    col_info["suggested_type"] = "date"
+                except:
+                    col_info["suggested_type"] = "categorical"
+            else:
+                col_info["suggested_type"] = "categorical"
+                
+            columns_info.append(col_info)
+
+        return {
+            "filename": file.filename,
+            "total_rows": len(df),
+            "total_columns": len(df.columns),
+            "columns": columns_info
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/configure-columns")
+async def configure_columns(
+    file: UploadFile = File(...),
+    column_config: str = Form(...)
+):
+    """
+    Configure column types and target variable for analysis.
+    """
+    try:
+        print(f"[DEBUG] Starting configure-columns with file: {file.filename}")
+        
+        # Parse column configuration
+        try:
+            config = json.loads(column_config)
+            print(f"[DEBUG] Parsed config: {config}")
+        except json.JSONDecodeError as e:
+            print(f"[ERROR] Failed to parse column_config JSON: {e}")
+            raise HTTPException(status_code=400, detail=f"Invalid JSON in column_config: {str(e)}")
+        
+        # Read the file
+        try:
+            contents = await file.read()
+            if not contents:
+                raise HTTPException(status_code=400, detail="File is empty")
+            
+            df = pd.read_csv(io.StringIO(contents.decode("utf-8")))
+            if df.empty:
+                raise HTTPException(status_code=400, detail="CSV file contains no data")
+            
+            print(f"[DEBUG] Successfully read CSV with {len(df)} rows and {len(df.columns)} columns")
+            print(f"[DEBUG] Columns: {df.columns.tolist()}")
+            
+        except pd.errors.ParserError as e:
+            print(f"[ERROR] CSV parsing error: {e}")
+            raise HTTPException(status_code=400, detail=f"CSV Parsing Error: {str(e)}")
+        except UnicodeDecodeError as e:
+            print(f"[ERROR] File encoding error: {e}")
+            raise HTTPException(status_code=400, detail="Invalid file encoding. Please use UTF-8.")
+        except Exception as e:
+            print(f"[ERROR] File reading error: {e}")
+            raise HTTPException(status_code=400, detail=f"Error reading file: {str(e)}")
+        
+        # Apply column configuration
+        numeric_columns = config.get("numeric_columns", [])
+        categorical_columns = config.get("categorical_columns", [])
+        date_columns = config.get("date_columns", [])
+        target_column = config.get("target_column")
+        
+        print(f"[DEBUG] Configuring columns - Numeric: {numeric_columns}, Categorical: {categorical_columns}, Date: {date_columns}, Target: {target_column}")
+        
+        # Validate that all configured columns exist in the DataFrame
+        all_configured_columns = set(numeric_columns + categorical_columns + date_columns)
+        if target_column:
+            all_configured_columns.add(target_column)
+        
+        missing_columns = all_configured_columns - set(df.columns)
+        if missing_columns:
+            print(f"[ERROR] Missing columns in DataFrame: {missing_columns}")
+            raise HTTPException(status_code=400, detail=f"Columns not found in dataset: {list(missing_columns)}")
+        
+        # Convert column types with error handling
+        try:
+            for col in numeric_columns:
+                if col in df.columns:
+                    print(f"[DEBUG] Converting {col} to numeric")
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
+                    
+            for col in categorical_columns:
+                if col in df.columns:
+                    print(f"[DEBUG] Converting {col} to categorical")
+                    df[col] = df[col].astype('category')
+                    
+            for col in date_columns:
+                if col in df.columns:
+                    print(f"[DEBUG] Converting {col} to datetime")
+                    df[col] = pd.to_datetime(df[col], errors='coerce')
+                    
+        except Exception as e:
+            print(f"[ERROR] Error converting column types: {e}")
+            raise HTTPException(status_code=400, detail=f"Error converting column types: {str(e)}")
+        
+        # Clean data for response
+        try:
+            processed_data = clean_data(df.head(10).to_dict(orient="records"))
+        except Exception as e:
+            print(f"[ERROR] Error cleaning data: {e}")
+            processed_data = []
+        
+        print(f"[DEBUG] Configuration completed successfully")
+        
+        # Store configuration in session or return processed data
+        return {
+            "message": "Column configuration applied successfully",
+            "target_column": target_column,
+            "numeric_columns": numeric_columns,
+            "categorical_columns": categorical_columns,
+            "date_columns": date_columns,
+            "processed_data": processed_data
+        }
+        
+    except HTTPException:
+        # Re-raise HTTP exceptions as-is
+        raise
+    except Exception as e:
+        print(f"[ERROR] Unexpected error in configure-columns: {e}")
+        print(f"[ERROR] Error type: {type(e)}")
+        import traceback
+        print(f"[ERROR] Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 # ============== Test
 # def generate_llama_response(prompt: str):

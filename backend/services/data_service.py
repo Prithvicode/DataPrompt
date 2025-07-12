@@ -217,6 +217,118 @@ class DataAnalyzer:
             "data": summary
         }
 
+    def generate_dynamic_summary(self, config: dict = None) -> Dict[str, Any]:
+        """
+        Generate a dynamic summary based on column configuration instead of hardcoded columns.
+        """
+        print("[INFO] Generating dynamic dataset summary")
+        df = self.df
+
+        summary = {
+            "overview": {
+                "total_records": len(df),
+                "total_columns": len(df.columns),
+                "column_names": df.columns.tolist(),
+                "data_types": df.dtypes.astype(str).to_dict(),
+                "missing_data": df.isnull().sum().to_dict(),
+                "duplicate_records": int(df.duplicated().sum())
+            },
+            "insights": {},
+            "visual_data": {}
+        }
+
+        if config:
+            numeric_columns = config.get("numeric_columns", [])
+            categorical_columns = config.get("categorical_columns", [])
+            date_columns = config.get("date_columns", [])
+            target_column = config.get("target_column")
+            
+            # Numeric insights
+            if numeric_columns:
+                summary["insights"]["numeric_stats"] = df[numeric_columns].describe().round(2).to_dict()
+                
+                # Correlation analysis if we have multiple numeric columns
+                if len(numeric_columns) > 1:
+                    correlation_matrix = df[numeric_columns].corr().round(3).to_dict()
+                    summary["insights"]["correlations"] = correlation_matrix
+                
+                # Target variable analysis
+                if target_column and target_column in numeric_columns:
+                    target_stats = df[target_column].describe().round(2).to_dict()
+                    summary["insights"]["target_variable"] = {
+                        "name": target_column,
+                        "statistics": target_stats
+                    }
+            
+            # Categorical insights
+            if categorical_columns:
+                categorical_insights = {}
+                for col in categorical_columns:
+                    if col in df.columns:
+                        value_counts = df[col].value_counts().head(10).to_dict()
+                        categorical_insights[col] = {
+                            "unique_values": int(df[col].nunique()),
+                            "top_values": value_counts
+                        }
+                summary["insights"]["categorical_analysis"] = categorical_insights
+            
+            # Date insights
+            if date_columns:
+                date_insights = {}
+                for col in date_columns:
+                    if col in df.columns:
+                        try:
+                            df[col] = pd.to_datetime(df[col])
+                            date_insights[col] = {
+                                "min_date": str(df[col].min()),
+                                "max_date": str(df[col].max()),
+                                "date_range_days": (df[col].max() - df[col].min()).days
+                            }
+                        except:
+                            pass
+                summary["insights"]["date_analysis"] = date_insights
+            
+            # Visual data for charts
+            if numeric_columns and target_column and target_column in numeric_columns:
+                # Top features by correlation with target
+                correlations = df[numeric_columns].corr()[target_column].abs().sort_values(ascending=False)
+                top_features = correlations.head(5).index.tolist()
+                
+                summary["visual_data"]["feature_importance"] = [
+                    {
+                        "feature": feature,
+                        "correlation": round(correlations[feature], 3)
+                    }
+                    for feature in top_features if feature != target_column
+                ]
+            
+            # Distribution data for target variable
+            if target_column and target_column in df.columns:
+                if target_column in numeric_columns:
+                    # Create histogram data
+                    hist_data = df[target_column].value_counts(bins=10).to_dict()
+                    summary["visual_data"]["target_distribution"] = [
+                        {
+                            "range": str(bin_val),
+                            "count": int(count)
+                        }
+                        for bin_val, count in hist_data.items()
+                    ]
+                elif target_column in categorical_columns:
+                    # Create bar chart data
+                    bar_data = df[target_column].value_counts().head(10).to_dict()
+                    summary["visual_data"]["target_distribution"] = [
+                        {
+                            "category": str(cat),
+                            "count": int(count)
+                        }
+                        for cat, count in bar_data.items()
+                    ]
+
+        return {
+            "type": "summary",
+            "data": summary
+        }
     
     def generate_summary(self) -> Dict[str, Any]:
         """

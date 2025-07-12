@@ -170,6 +170,111 @@ def process_forecast(df, forecast_periods=3):
     return combined_df.to_dict(orient="records")
 
 
+def make_dynamic_prediction(df, config):
+    """
+    Make predictions using dynamic column configuration instead of hardcoded columns.
+    """
+    print("[DEBUG] Making dynamic prediction...")
+    
+    try:
+        # Extract configuration
+        numeric_columns = config.get("numeric_columns", [])
+        categorical_columns = config.get("categorical_columns", [])
+        target_column = config.get("target_column")
+        
+        if not target_column or target_column not in df.columns:
+            raise ValueError(f"Target column '{target_column}' not found in dataset")
+        
+        # Prepare features
+        feature_columns = []
+        
+        # Add numeric columns as features
+        for col in numeric_columns:
+            if col in df.columns and col != target_column:
+                feature_columns.append(col)
+        
+        # Add encoded categorical columns
+        df_encoded = df.copy()
+        for col in categorical_columns:
+            if col in df.columns and col != target_column:
+                # One-hot encode categorical variables
+                dummies = pd.get_dummies(df_encoded[col], prefix=col, drop_first=True)
+                df_encoded = pd.concat([df_encoded, dummies], axis=1)
+                feature_columns.extend(dummies.columns.tolist())
+        
+        if not feature_columns:
+            raise ValueError("No valid feature columns found")
+        
+        # Prepare X and y
+        X = df_encoded[feature_columns].fillna(0)
+        y = df_encoded[target_column]
+        
+        # Train a simple linear regression model
+        from sklearn.linear_model import LinearRegression
+        from sklearn.model_selection import train_test_split
+        from sklearn.metrics import mean_absolute_error, r2_score
+        
+        # Split data
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+        
+        # Train model
+        model = LinearRegression()
+        model.fit(X_train, y_train)
+        
+        # Make predictions
+        y_pred = model.predict(X_test)
+        
+        # Calculate metrics
+        mae = mean_absolute_error(y_test, y_pred)
+        r2 = r2_score(y_test, y_pred)
+        
+        # Create visualization data
+        visualization_data = []
+        for i in range(min(len(y_test), 50)):  # Limit to 50 points for visualization
+            visualization_data.append({
+                "index": i,
+                "actual": float(y_test.iloc[i]),
+                "predicted": float(y_pred[i])
+            })
+        
+        return {
+            "type": "prediction",
+            "target_column": target_column,
+            "feature_columns": feature_columns,
+            "metrics": {
+                "mean_absolute_error": round(mae, 2),
+                "r2_score": round(r2, 4)
+            },
+            "visualization": {
+                "type": "scatter",
+                "data": visualization_data,
+                "x": "index",
+                "y": ["actual", "predicted"],
+                "title": f"Predicted vs Actual {target_column}",
+                "xLabel": "Sample Index",
+                "yLabel": target_column
+            },
+            "model_info": {
+                "algorithm": "Linear Regression",
+                "features_used": len(feature_columns),
+                "training_samples": len(X_train),
+                "test_samples": len(X_test)
+            }
+        }
+        
+    except Exception as e:
+        print(f"[ERROR] Dynamic prediction failed: {str(e)}")
+        return {
+            "type": "error",
+            "message": f"Prediction failed: {str(e)}"
+        }
+
+def make_prediction(df):
+    """
+    Legacy function for backward compatibility with hardcoded columns.
+    """
+    print("[DEBUG] Making legacy prediction...")
+    return process_and_predict(df)
 
 
 if __name__ == "__main__":
