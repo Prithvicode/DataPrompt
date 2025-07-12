@@ -32,7 +32,7 @@ export default function RootLayout({
   return (
     <html lang="en light">
       <body
-        className={`${inter.variable} antialiased custom-scrollbar bg-primary`}
+        className={`${inter.variable} antialiased custom-scrollbar bg-white`}
         suppressHydrationWarning={true}
       >
         <QueryProvider>{children}</QueryProvider>

@@ -349,6 +349,121 @@ Respond with only the JSON object, nothing else.
 
     print(f"[DEBUG] Extracted Forecast Period: {forecast_period}")
     return forecast_period
+
+def extract_operation_from_prompt(prompt: str) -> Dict[str, Any]:
+    """
+    Extract the operation type and parameters from a user prompt.
+    """
+    base_prompt = f"""
+You are an AI assistant that extracts operations from user prompts. Analyze the following prompt and determine the operation type and any relevant parameters.
+
+User prompt: {prompt}
+
+Return a JSON object with the following structure:
+{{
+    "operation": "<operation_type>",
+    "row_value": "<row_number_if_applicable>"
+}}
+
+Valid operation types:
+- "summarize" - for summary statistics or overview requests
+- "row" - for specific row requests (include row_value)
+- "table" - for full table data requests
+- "forecast" - for forecasting requests
+- "query" - for general data queries
+
+If no specific operation is detected, return:
+{{
+    "operation": "query"
+}}
+
+Return only the JSON object, no additional text.
+"""
+
+    try:
+        response = requests.post(
+            OLLAMA_URL,
+            json={"model": MODEL_NAME, "prompt": base_prompt, "stream": False}
+        )
+        response.raise_for_status()
+        response_json = response.json()
+        model_response = response_json.get("response", "").strip()
+        
+        # Try to parse the JSON response
+        try:
+            result = json.loads(model_response)
+            return result
+        except json.JSONDecodeError:
+            # Fallback to basic operation detection
+            prompt_lower = prompt.lower()
+            if any(word in prompt_lower for word in ["summarize", "summary", "overview", "describe"]):
+                return {"operation": "summarize"}
+            elif any(word in prompt_lower for word in ["row", "line", "record"]):
+                # Try to extract row number
+                import re
+                row_match = re.search(r'row\s+(\d+)', prompt_lower)
+                row_value = row_match.group(1) if row_match else None
+                return {"operation": "row", "row_value": row_value}
+            elif any(word in prompt_lower for word in ["table", "all data", "full data"]):
+                return {"operation": "table"}
+            elif any(word in prompt_lower for word in ["forecast", "predict", "future"]):
+                return {"operation": "forecast"}
+            else:
+                return {"operation": "query"}
+                
+    except Exception as e:
+        print(f"[ERROR] Error extracting operation: {e}")
+        return {"operation": "query"}
+
+def stream_llama_response(prompt: str, result_data: Dict[str, Any]):
+    """
+    Generate a streaming response from the LLM based on the prompt and result data.
+    """
+    base_prompt = f"""
+You are an assistant in the DataPrompt app. Your role is to explain data analysis results in a short, clear, and user-friendly way.
+
+Guidelines:
+- Explain the result simply, as if you're advising a business decision-maker.
+- Focus on what the result **means** and what actions the user might consider.
+- Highlight **trends**, **opportunities**, **risks**, or **anomalies** if visible.
+- Do NOT include raw data or tables in the output.
+- Do NOT wrap the full result or JSON in Markdown.
+- Do NOT wrap the full result or JSON in Code Block.
+- Do NOT explain the whole dataset result, but focus on the interpretation of result.
+- ONLY explain what the result means, in plain terms.
+- Use clean, readable Markdown formatting (e.g., bold for key values).
+- Currency is in NRs (Nepali Rupees).
+- Tailor the explanation based on the user's intent.
+- Write a short but **insightful** summary that helps the user understand what is happening and what they might do next.
+- Do NOT begin your response with phrases like "Sure", "Here's", "This is", or any introductory sentence. Start directly with the insight.
+
+Context:
+- User Prompt: {prompt}
+- Result (for your reference only, do NOT return this): {result_data}
+
+Your task:
+Write a short interpretation of the result above, as if explaining it to a non-technical user. Return only the explanation in Markdown — no raw output or JSON.
+
+Output (Markdown explanation only):
+"""
+
+    try:
+        response = requests.post(
+            OLLAMA_URL,
+            json={"model": MODEL_NAME, "prompt": base_prompt, "stream": True}
+        )
+        response.raise_for_status()
+        
+        for line in response.iter_lines():
+            if line:
+                chunk = json.loads(line.decode())
+                if content := chunk.get("response", ""):
+                    yield content
+                if chunk.get("done", False):
+                    break
+                    
+    except Exception as e:
+        yield f"Error generating explanation: {str(e)}"
   
 if __name__ == "__main__":
     result = extract_forecast_period("Forecast the next 12 months of sales for the product.")  

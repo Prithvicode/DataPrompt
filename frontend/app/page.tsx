@@ -4,7 +4,7 @@ import React from "react";
 
 const page = () => {
   return (
-    <div className="bg-accent">
+    <div className="bg-white min-h-screen">
       <ChatComponent />
     </div>
   );
